@@ -1,8 +1,5 @@
 # apps/qtgui/CMakeLists.txt
 
-set(QTGUI_PROJECT_NAME "QtGui")
-project(${QTGUI_PROJECT_NAME} VERSION 0.1 LANGUAGES C CXX)
-
 # Qt 自动处理 moc/uic/rcc
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -16,11 +13,24 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
 set(QTGUI_SOURCES
     src/main.cpp
-    src/mainwindow.cpp
-    src/mainwindow.h
-    src/mainwindow.ui
+
+    src/windows/MainWindow.cpp
+    src/windows/MainWindow.h
+    src/windows/MainWindow.ui
+
+    src/panels/MainPanel.cpp
+    src/panels/MainPanel.h
+    src/panels/MainPanel.ui
+
+    src/modules/dial/DialWidget.cpp
+    src/modules/dial/DialWidget.h
+    src/modules/dial/DialWidget.ui
+
+    src/modules/ble/BleWidget.cpp
+    src/modules/ble/BleWidget.h
+    src/modules/ble/BleWidget.ui
 )
-source_group(src FILES ${QTGUI_SOURCES})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/src FILES ${QTGUI_SOURCES})
 
 set(PROJECT_SOURCES
     ${QTGUI_SOURCES}
@@ -43,7 +53,16 @@ else()
     endif()
 endif()
 
-target_link_libraries(QtGui PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+target_link_libraries(QtGui 
+    PRIVATE 
+	    Qt${QT_VERSION_MAJOR}::Widgets
+		wqt_dial
+                wqt_ble
+)
+
+target_include_directories(QtGui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
 # 保留你原来这堆属性 & install & qt_finalize_executable
 if(${QT_VERSION} VERSION_LESS 6.1.0)
