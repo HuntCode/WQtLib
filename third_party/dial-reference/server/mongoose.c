@@ -33,6 +33,8 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <inttypes.h>
+#include <pthread.h>
 
 #ifndef BUFSIZ
 #define BUFSIZ  4096
@@ -44,23 +46,45 @@
 
 #define MAX_REQUEST_SIZE 4096
 #define NUM_THREADS 4
-#include <sys/wait.h>
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/time.h>
-#include <stdint.h>
-#include <inttypes.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <pthread.h>
 
+#ifdef _WIN32
+  #define WIN32_LEAN_AND_MEAN
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #include <windows.h>
 
-#define ERRNO errno
-#define INVALID_SOCKET (-1)
+  #define ERRNO WSAGetLastError()
 
-typedef int SOCKET;
+  //Windows用 closesocket/sleep/SO_XXX这类宏
+  #define close closesocket
+  #define sleep(x) Sleep((x) * 1000)
+
+  // SHUT_WR在winsock里叫SD_SEND
+  #ifndef SHUT_WR
+  #define SHUT_WR SD_SEND
+  #endif
+
+  //winsock已经 typedef 了SOCKET/INVALID_SOCKET
+
+  //Windows没有flockfile/funlockfile
+  #define flockfile(x)   ((void)0)
+  #define funlockfile(x) ((void)0)
+
+#else
+  #include <sys/wait.h>
+  #include <sys/socket.h>
+  #include <sys/select.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <sys/time.h>
+  #include <stdint.h>
+  #include <netdb.h>
+  #include <unistd.h>
+
+  #define ERRNO errno
+  #define INVALID_SOCKET (-1)
+  typedef int SOCKET;
+#endif
 
 #include "mongoose.h"
 
@@ -70,8 +94,8 @@ typedef int SOCKET;
 #if defined(DEBUG)
 #define DEBUG_TRACE(x) do { \
   flockfile(stdout); \
-  printf("*** %lu.%p.%s.%d: ", \
-         (unsigned long) time(NULL), (void *) pthread_self(), \
+  printf("*** %lu.%lu.%s.%d: ", \
+         (unsigned long) time(NULL), mg_thread_id(), \
          __func__, __LINE__); \
   printf x; \
   putchar('\n'); \
@@ -125,6 +149,14 @@ struct mg_connection {
   int request_len;            // Size of the request + headers in a buffer
   int data_len;               // Total size of data in a buffer
 };
+
+static unsigned long mg_thread_id(void) {
+#ifdef _WIN32
+    return (unsigned long)GetCurrentThreadId();
+#else
+    return (unsigned long)pthread_self();
+#endif
+}
 
 static void *call_user(struct mg_connection *conn, enum mg_event event) {
   conn->request_info.user_data = conn->ctx->user_data;
@@ -331,10 +363,14 @@ static int start_thread(struct mg_context *ctx, mg_thread_func_t func,
 }
 
 static void set_non_blocking_mode(SOCKET sock) {
+#ifdef _WIN32
+  u_long on = 1;
+  ioctlsocket(sock, FIONBIO, &on);
+#else
   int flags;
-
   flags = fcntl(sock, F_GETFL, 0);
   (void) fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+#endif
 }
 
 // Write data to the IO channel - opened file descriptor, socket or SSL
@@ -973,10 +1009,12 @@ struct mg_context *mg_start(mg_callback_t user_callback, void *user_data, int po
   }
   // Ignore SIGPIPE signal, so if browser cancels the request, it
   // won't kill the whole
+#ifndef _WIN32
   if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
     free_context(ctx);
     return NULL;
-  };
+  }
+#endif
   if (pthread_mutex_init(&ctx->mutex, NULL) != 0 ||
       pthread_cond_init(&ctx->cond, NULL) != 0 ||
       pthread_cond_init(&ctx->sq_empty, NULL) != 0 ||

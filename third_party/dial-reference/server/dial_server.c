@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2020 Netflix, Inc.
  * All rights reserved.
  *
@@ -26,14 +26,30 @@
 #include "dial_data.h"
 #include "dial_server.h"
 
+#ifdef _WIN32
+    // 必须在包含 windows.h 之前包含 winsock2.h（如果工程里有 windows.h 的话）
+    #include <winsock2.h>
+    #include <ws2tcpip.h>   // inet_ntop、socklen_t 等
+    // 如果后面出现 socklen_t 未定义，可以额外加一行：
+    // typedef int socklen_t;
+    #include <windows.h>
+
+    // MSVC 把 POSIX 的 strdup 标成“非标准”，但实际实现叫 _strdup
+    #ifndef strdup
+    #define strdup _strdup
+    #endif
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+
 #include <pthread.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
+
 
 #include "mongoose.h"
 #include "url_lib.h"
@@ -598,7 +614,7 @@ static int host_matches(const char *origin, const char *candidate) {
 /**
  * Returns true if the origin is acceptable based on the candidate value.
  * The origin must be an exact match to the candidate, unless the
- * candidate is of the form 'scheme://*' or 'scheme:*' in which case
+ * candidate is of the form 'scheme:// *' or 'scheme:*' in which case
  * everything before the wildcard '*' character must be an exact match but
  * anything is accepted in place of the wildcard.
  *

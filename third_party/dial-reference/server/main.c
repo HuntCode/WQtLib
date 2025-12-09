@@ -23,23 +23,28 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <signal.h>
+#include <time.h>
+
+#ifndef _WIN32
+#include <pthread.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <regex.h>
+#else
+#include <windows.h>
+#include <process.h>    // _spawnvp
+#endif
 
 #include "dial_server.h"
 #include "dial_options.h"
-#include <signal.h>
-#include <stdbool.h>
-
 #include "url_lib.h"
 #include "nf_callbacks.h"
 #include "system_callbacks.h"
@@ -50,7 +55,7 @@ char *spAppNetflix = "netflix";      // name of the netflix executable
 static char *spDefaultNetflix = "../../../src/platform/qt/netflix";
 static char *spDefaultData="../../../src/platform/qt/data";
 static char *spNfDataDir = "NF_DATA_DIR=";
-static char *spDefaultFriendlyName = "DIAL server sample";
+static char *spDefaultFriendlyName = "HHDIAL_Server";
 static char *spDefaultModelName = "NOT A VALID MODEL NAME";
 static char *spDefaultUuid = "deadbeef-dead-beef-dead-beefdeadbeef";
 static char spDataDir[BUFSIZE];
@@ -65,11 +70,19 @@ char spSleepPassword[BUFSIZE];
 
 static char *spAppYouTube = "chrome";
 static char *spAppYouTubeMatch = "chrome.*google-chrome-dial";
+
+#ifdef _WIN32
+// Windows: 占位的 Chrome 路径，记得改成你自己机器上的安装路径
+static char *spAppYouTubeExecutable = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+#else
 static char *spAppYouTubeExecutable = "/opt/google/chrome/google-chrome";
+#endif
 static char *spYouTubePS3UserAgent = "--user-agent="
     "Mozilla/5.0 (PS3; Leanback Shell) AppleWebKit/535.22 (KHTML, like Gecko) "
     "Chrome/19.0.1048.0 LeanbackShell/01.00.01.73 QA Safari/535.22 Sony PS3/ "
     "(PS3, , no, CH)";
+
+#ifndef _WIN32
 
 int doesMatch( char* pzExp, char* pzStr)
 {
@@ -88,16 +101,6 @@ int doesMatch( char* pzExp, char* pzStr)
     }
     regfree(&exp);
     return match;
-}
-
-void signalHandler(int signal)
-{
-    switch(signal)
-    {
-        case SIGTERM:
-            // just ignore this, we don't want to die
-            break;
-    }
 }
 
 /*
@@ -182,6 +185,53 @@ pid_t runApplication( const char * const args[], DIAL_run_t *run_id ) {
   }
 }
 
+#else //_WIN32
+
+/*
+ * Windows 版：先简化处理
+ * - isAppRunning 先全部返回 0（认为进程没在跑）
+ *   后面如果需要，可以用 ToolHelp32Snapshot / EnumProcesses 实现真正版本
+ */
+int isAppRunning(char *pzName, char *pzCommandPattern)
+{
+    (void)pzName;
+    (void)pzCommandPattern;
+    return 0;
+}
+
+/*
+ * Windows 版 runApplication：
+ * 使用 _spawnvp(_P_NOWAIT, ...) 异步启动 chrome 进程
+ */
+DIALStatus runApplication(const char * const args[], DIAL_run_t *run_id)
+{
+    printf("Execute (Windows):\n");
+    for (int i = 0; args[i]; ++i) {
+        printf(" %d) %s\n", i, args[i]);
+    }
+
+    // _spawnvp 需要 char* 指针数组
+    intptr_t pid = _spawnvp(_P_NOWAIT, args[0], (char * const *)args);
+    if (pid == -1) {
+        perror("Failed to Launch");
+        return kDIALStatusStopped;
+    }
+
+    *run_id = (void*)pid;
+    return kDIALStatusRunning;
+}
+
+#endif
+
+void signalHandler(int signal)
+{
+    switch(signal)
+    {
+        case SIGTERM:
+            // just ignore this, we don't want to die
+            break;
+    }
+}
 
 /* Compare the applications last launch parameters with the new parameters.
  * If they match, return false
@@ -236,10 +286,18 @@ static DIALStatus youtube_status(DIALServer *ds, const char *appname,
 static void youtube_stop(DIALServer *ds, const char *appname, DIAL_run_t run_id,
                          void *callback_data) {
     printf("\n\n ** KILL YouTube **\n\n");
+#ifndef _WIN32
     pid_t pid;
-    if ((pid = isAppRunning( spAppYouTube, spAppYouTubeMatch ))) {
+    if ((pid = isAppRunning(spAppYouTube, spAppYouTubeMatch))) {
         kill(pid, SIGTERM);
     }
+#else
+    // Windows: 暂时不做真正的 kill，后面如果 run_id 存的是进程句柄/ID，可以在这里 TerminateProcess
+    (void)ds;
+    (void)appname;
+    (void)run_id;
+    (void)callback_data;
+#endif
 }
 
 void run_ssdp(int port, const char *pFriendlyName, const char * pModelName, const char *pUuid);
@@ -281,20 +339,20 @@ void runDial(void)
         return;
     }
     
-    struct DIALAppCallbacks cb_nf;
-    cb_nf.start_cb = netflix_start;
-    cb_nf.hide_cb = netflix_hide;
-    cb_nf.stop_cb = netflix_stop;
-    cb_nf.status_cb = netflix_status;
+    // struct DIALAppCallbacks cb_nf;
+    // cb_nf.start_cb = netflix_start;
+    // cb_nf.hide_cb = netflix_hide;
+    // cb_nf.stop_cb = netflix_stop;
+    // cb_nf.status_cb = netflix_status;
     struct DIALAppCallbacks cb_yt = {youtube_start, youtube_hide, youtube_stop, youtube_status};
     struct DIALAppCallbacks cb_system = {system_start, system_hide, NULL, system_status};
 
 #if defined DEBUG
-    if (DIAL_register_app(ds, "Netflix", &cb_nf, NULL, 1, "https://netflix.com https://www.netflix.com https://port.netflix.com:123 proto://*") == -1 ||
-        DIAL_register_app(ds, "YouTube", &cb_yt, NULL, 1, "https://youtube.com https://www.youtube.com https://*.youtube.com:443 https://port.youtube.com:123 package:com.google.android.youtube package:com.google.ios.youtube proto:*") == -1 ||
+    //if (DIAL_register_app(ds, "Netflix", &cb_nf, NULL, 1, "https://netflix.com https://www.netflix.com https://port.netflix.com:123 proto://*") == -1 ||
+    if (DIAL_register_app(ds, "YouTube", &cb_yt, NULL, 1, "https://youtube.com https://www.youtube.com https://*.youtube.com:443 https://port.youtube.com:123 package:com.google.android.youtube package:com.google.ios.youtube proto:*") == -1 ||
 #else
-    if (DIAL_register_app(ds, "Netflix", &cb_nf, NULL, 1, "https://netflix.com https://www.netflix.com") == -1 ||
-        DIAL_register_app(ds, "YouTube", &cb_yt, NULL, 1, "https://youtube.com https://*.youtube.com package:*") == -1 ||
+    //if (DIAL_register_app(ds, "Netflix", &cb_nf, NULL, 1, "https://netflix.com https://www.netflix.com") == -1 ||
+    if (DIAL_register_app(ds, "YouTube", &cb_yt, NULL, 1, "https://youtube.com https://*.youtube.com package:*") == -1 ||
 #endif
         DIAL_register_app(ds, "system", &cb_system, NULL, 1, "") == -1)
     {
@@ -354,11 +412,23 @@ static void processOption( int index, char * pOption )
 
 int main(int argc, char* argv[])
 {
+#ifndef _WIN32
     struct sigaction action;
     action.sa_handler = signalHandler;
     sigemptyset(&action.sa_mask);
     action.sa_flags = 0;
     sigaction(SIGTERM, &action, NULL);
+#else
+    // Windows: 用简单版 signal
+    signal(SIGTERM, signalHandler);
+
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        fprintf(stderr, "WSAStartup failed: %d\n", (int)WSAGetLastError());
+        return 1;
+    }
+
+#endif
 
     srand(time(NULL));
     int i;
@@ -400,6 +470,10 @@ int main(int argc, char* argv[])
         }
     }
     runDial();
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
 
     return 0;
 }

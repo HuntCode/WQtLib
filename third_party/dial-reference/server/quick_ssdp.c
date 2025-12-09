@@ -1,4 +1,4 @@
-/*
+﻿/*
 * Copyright (c) 2014 Netflix, Inc.
 * All rights reserved.
 *
@@ -23,17 +23,35 @@
 * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <arpa/inet.h>
-#include <net/if.h>
-#include <netinet/in.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#  include <iphlpapi.h>
+
+// 链接库交给 CMake 处理，这里只做类型/宏适配
+#  ifndef socklen_t
+typedef int socklen_t;
+#  endif
+
+#  define close closesocket
+
+#else   // Linux / Unix 类平台
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
+
 #include "mongoose.h"
-#include <stdbool.h>
 
 // TODO: Partners should define this port
 #define SSDP_PORT (56790)
@@ -122,6 +140,92 @@ static void *request_handler(enum mg_event event,
  *         memory.
  */
 static char * get_local_address() {
+#ifdef _WIN32
+    // ---- Windows 实现：用 GetAdaptersAddresses 拿 IP + MAC ----
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST |
+                  GAA_FLAG_SKIP_MULTICAST |
+                  GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG family = AF_INET;  // 只关心 IPv4
+    ULONG bufLen = 0;
+    IP_ADAPTER_ADDRESSES *addresses = NULL;
+    IP_ADAPTER_ADDRESSES *addr = NULL;
+    DWORD ret;
+
+    // 第一次调用只是为了拿需要的 buffer 大小
+    ret = GetAdaptersAddresses(family, flags, NULL, NULL, &bufLen);
+    if (ret != ERROR_BUFFER_OVERFLOW) {
+        fprintf(stderr, "GetAdaptersAddresses(size) failed: %lu\n", ret);
+        return NULL;
+    }
+
+    addresses = (IP_ADAPTER_ADDRESSES *)malloc(bufLen);
+    if (!addresses) {
+        fprintf(stderr, "GetAdaptersAddresses: OOM\n");
+        return NULL;
+    }
+
+    ret = GetAdaptersAddresses(family, flags, NULL, addresses, &bufLen);
+    if (ret != NO_ERROR) {
+        fprintf(stderr, "GetAdaptersAddresses failed: %lu\n", ret);
+        free(addresses);
+        return NULL;
+    }
+
+    char *hw = NULL;
+
+    for (addr = addresses; addr != NULL; addr = addr->Next) {
+        // 跳过环回接口
+        if (addr->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        if (addr->OperStatus != IfOperStatusUp) {
+            continue;
+        }
+
+        // 找 IPv4 地址
+        IP_ADAPTER_UNICAST_ADDRESS *u;
+        for (u = addr->FirstUnicastAddress; u != NULL; u = u->Next) {
+            if (u->Address.lpSockaddr->sa_family != AF_INET)
+                continue;
+
+            struct sockaddr_in *sa = (struct sockaddr_in *)u->Address.lpSockaddr;
+            const char *ip = inet_ntoa(sa->sin_addr);
+            if (!ip) {
+                continue;
+            }
+
+            // 保存 IP 字符串到全局 ip_addr（用于 dd.xml 等）
+            strncpy(ip_addr, ip, sizeof(ip_addr) - 1);
+            ip_addr[sizeof(ip_addr) - 1] = '\0';
+
+            // 生成 MAC 字符串
+            if (addr->PhysicalAddressLength >= 6) {
+                hw = (char *)malloc(HW_ADDRSTRLEN);
+                if (!hw) {
+                    free(addresses);
+                    return NULL;
+                }
+                snprintf(hw, HW_ADDRSTRLEN,
+                         "%02X:%02X:%02X:%02X:%02X:%02X",
+                         addr->PhysicalAddress[0],
+                         addr->PhysicalAddress[1],
+                         addr->PhysicalAddress[2],
+                         addr->PhysicalAddress[3],
+                         addr->PhysicalAddress[4],
+                         addr->PhysicalAddress[5]);
+            }
+            break;
+        }
+
+        if (hw) {
+            break;  // 找到一个合适的接口就够了
+        }
+    }
+
+    free(addresses);
+    return hw; // 由调用者 free()
+
+#else
     struct ifconf ifc;
     char buf[4096];
     char * hw_addr = NULL;
@@ -174,6 +278,7 @@ static char * get_local_address() {
     }
     close(s);
     return hw_addr;
+#endif
 }
 
 static void handle_mcast(char *hw_addr) {
@@ -283,5 +388,6 @@ void run_ssdp(int port, const char *pFriendlyName, const char * pModelName, cons
         printf("SSDP listening on %s:%d\n", ip_addr, my_port);
         handle_mcast(hw_addr);
     }
-    free(hw_addr); hw_addr = NULL;
+    free(hw_addr);
+    hw_addr = NULL;
 }

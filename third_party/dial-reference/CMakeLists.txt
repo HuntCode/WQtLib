@@ -12,8 +12,8 @@ set(DIALSERVER_SOURCES
     ${DIALSERVER_SRC_DIR}/main.c
     ${DIALSERVER_SRC_DIR}/mongoose.c
     ${DIALSERVER_SRC_DIR}/mongoose.h
-    ${DIALSERVER_SRC_DIR}/nf_callbacks.c
-    ${DIALSERVER_SRC_DIR}/nf_callbacks.h
+    #${DIALSERVER_SRC_DIR}/nf_callbacks.c
+    #${DIALSERVER_SRC_DIR}/nf_callbacks.h
     ${DIALSERVER_SRC_DIR}/quick_ssdp.c
     ${DIALSERVER_SRC_DIR}/system_callbacks.c
     ${DIALSERVER_SRC_DIR}/system_callbacks.h
@@ -24,6 +24,7 @@ source_group(src FILES ${DIALSERVER_SOURCES})
 
 add_executable(dialserver
     ${DIALSERVER_SOURCES}
+    vcpkg.json
 )
 
 target_include_directories(dialserver
@@ -64,9 +65,11 @@ if (UNIX AND NOT APPLE)
         pthread
     )
 elseif (WIN32)
-    # 先不链接 pthread，等源码移植完再看是否需要 vcpkg pthread
-    # 如果之后决定用 vcpkg pthread，可以改成：
-    #   find_package(pthreads CONFIG REQUIRED)
-    #   target_link_libraries(dialserver PRIVATE pthreads::pthreads)
+    find_package(PThreads4W REQUIRED)
+    target_link_libraries(dialserver PRIVATE
+        PThreads4W::PThreads4W
+        ws2_32
+        Iphlpapi
+    )
 endif()
 

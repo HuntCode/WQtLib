@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2014-2019 Netflix, Inc.
  * All rights reserved.
  *
@@ -26,7 +26,11 @@
 #ifndef DIAL_SERVER_H_
 #define DIAL_SERVER_H_
 
+#ifdef _WIN32
+typedef unsigned short in_port_t;
+#else
 #include <netinet/in.h>
+#endif
 
 //#define DEBUG
 #ifdef DEBUG

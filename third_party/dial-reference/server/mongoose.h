@@ -1,4 +1,4 @@
-// Copyright (c) 2004-2010 Sergey Lyubka
+﻿// Copyright (c) 2004-2010 Sergey Lyubka
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -32,9 +32,17 @@
 extern "C" {
 #endif // __cplusplus
 
+#ifdef _WIN32
+// 一定要先包含 winsock2 再包含 windows 其他头
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#endif
 
 struct mg_context;     // Handle for the HTTP service itself
 struct mg_connection;  // Handle for the individual connection
