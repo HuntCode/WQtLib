@@ -31,12 +31,38 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <direct.h>  // _mkdir
+#endif
 
 char dial_data_dir[256] = DIAL_DATA_DIR;
 
 void set_dial_data_dir(const char *data_dir) {
     strncpy(dial_data_dir, data_dir, 255);
 }
+
+#ifdef _WIN32
+static void ensure_dial_data_dir_exists(void)
+{
+    if (dial_data_dir[0] == '\0')
+        return;
+
+    char path[260];
+    strncpy(path, dial_data_dir, sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+
+    // 去掉末尾的'\\'或'/'
+    size_t len = strlen(path);
+    while (len > 0 && (path[len - 1] == '\\' || path[len - 1] == '/')) {
+        path[--len] = '\0';
+    }
+
+
+    _mkdir(path);
+}
+#else
+static void ensure_dial_data_dir_exists(void) {}
+#endif
 
 /**
  * Returns the path where data is stored for the given app.
@@ -61,22 +87,26 @@ static char* getAppPath(char *app_name) {
 }
 
 void store_dial_data(char *app_name, DIALData *data) {
+    // Windows 上先确保目录存在
+    ensure_dial_data_dir_exists();
+
     char* filename = getAppPath(app_name);
     if (filename == NULL) {
         printf("Cannot open DIAL data output file, out-of-memory.");
-        exit(1);
+        return;
     }
     FILE *f = fopen(filename, "w");
-    free(filename); filename = NULL;
     if (f == NULL) {
         printf("Cannot open DIAL data output file: %s\n", filename);
-        exit(1);
+        free(filename);
+        return;
     }
     for (DIALData *first = data; first != NULL; first = first->next) {
         // truncate because we have limits on length when retrieving.
         fprintf(f, "%.*s %.*s\n", DIAL_KEY_OR_VALUE_MAX_LEN, first->key, DIAL_KEY_OR_VALUE_MAX_LEN, first->value);
     }
     fclose(f);
+    free(filename);
 }
 
 DIALData *retrieve_dial_data(char *app_name) {

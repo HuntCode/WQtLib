@@ -32,7 +32,12 @@
 /*
  * Slash-terminated directory of where to persist the DIAL data.
  */
+#ifdef _WIN32
+ // 放到当前工作目录下的 dial_data 子目录里
+#define DIAL_DATA_DIR ".\\dial_data\\"
+#else
 #define DIAL_DATA_DIR "/tmp/"
+#endif
 
 /*
  * The maximum DIAL data payload accepted per the 'DIAL extension for smooth

@@ -341,15 +341,14 @@ static DIALStatus youtube_start(DIALServer *ds, const char *appname,
       snprintf( url, sizeof(url), "https://www.youtube.com/tv");
     }
 #ifdef _WIN32
-    // Windows：选一个独立 profile 目录，避免污染主 Chrome
-    const char* base = getenv("LOCALAPPDATA");   // 如 C:\Users\你\AppData\Local
+    const char* base = getenv("LOCALAPPDATA");
     if (!base) {
         base = getenv("TEMP");
     }
     if (!base) {
         base = "C:\\ChromeDialProfile";
     }
-    // 例如：C:\Users\你\AppData\Local\Google\Chrome\DialUserData
+
     snprintf(data, sizeof(data),
         "--user-data-dir=%s\\Google\\Chrome\\DialUserData", base);
 
@@ -362,7 +361,7 @@ static DIALStatus youtube_start(DIALServer *ds, const char *appname,
         NULL
     };
 
-#else   // 非 Windows（原来的 Linux 行为）
+#else
 
     const char* home = getenv("HOME");
     if (!home) {

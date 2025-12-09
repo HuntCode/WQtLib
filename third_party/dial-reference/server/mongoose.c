@@ -91,7 +91,7 @@
 #define MONGOOSE_VERSION "3.0"
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof(array[0]))
 
-#if defined(DEBUG)
+#if defined(DEBUG) || defined(_DEBUG)
 #define DEBUG_TRACE(x) do { \
   flockfile(stdout); \
   printf("*** %lu.%lu.%s.%d: ", \
@@ -713,7 +713,7 @@ static void reset_per_request_attributes(struct mg_connection *conn) {
 static void close_socket_gracefully(SOCKET sock) {
 #ifdef _WIN32
     if (sock == INVALID_SOCKET || sock == 0) {
-       fprintf(stderr, "close_socket_gracefully: invalid socket=%lld\n", (long long)sock);
+        DEBUG_TRACE(("close_socket_gracefully: invalid socket=%lld\n", (long long)sock));
         return;
     }
 
