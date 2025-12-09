@@ -199,25 +199,106 @@ int isAppRunning(char *pzName, char *pzCommandPattern)
     return 0;
 }
 
+#include <wchar.h>
+
+static void append_quoted_arg_w(wchar_t* cmdline, size_t cmd_cap, const char* arg)
+{
+    size_t len = wcslen(cmdline);
+    if (len >= cmd_cap - 1) {
+        return;
+    }
+
+    if (len > 0) {
+        cmdline[len++] = L' ';
+        cmdline[len] = L'\0';
+    }
+
+    int need_quotes = 0;
+    for (const char* p = arg; *p; ++p) {
+        if (*p == ' ' || *p == '\t' || *p == '"') {
+            need_quotes = 1;
+            break;
+        }
+    }
+
+    if (need_quotes) {
+        if (len >= cmd_cap - 2) return;
+        cmdline[len++] = L'"';
+        cmdline[len] = L'\0';
+    }
+
+    for (const char* p = arg; *p && len < cmd_cap - 1; ++p) {
+        if (*p == '"' && need_quotes) {
+            if (len < cmd_cap - 2) {
+                cmdline[len++] = L'\\';
+            }
+            else {
+                break;
+            }
+        }
+        cmdline[len++] = (wchar_t)(unsigned char)(*p);
+        cmdline[len] = L'\0';
+    }
+
+    if (need_quotes && len < cmd_cap - 1) {
+        cmdline[len++] = L'"';
+        cmdline[len] = L'\0';
+    }
+}
+
 /*
  * Windows 版 runApplication：
- * 使用 _spawnvp(_P_NOWAIT, ...) 异步启动 chrome 进程
+ * 使用 CreateProcessW + 宽字符命令行，把 args[0..] 全部拼成一条字符串，
+ * 保证带空格的 user-agent / URL 不会被拆。
  */
-DIALStatus runApplication(const char * const args[], DIAL_run_t *run_id)
+DIALStatus runApplication(const char* const args[], DIAL_run_t* run_id)
 {
     printf("Execute (Windows):\n");
     for (int i = 0; args[i]; ++i) {
         printf(" %d) %s\n", i, args[i]);
     }
 
-    // _spawnvp 需要 char* 指针数组
-    intptr_t pid = _spawnvp(_P_NOWAIT, args[0], (char * const *)args);
-    if (pid == -1) {
-        perror("Failed to Launch");
+    if (spDataDir[0] != '\0') {
+        _putenv(spDataDir);
+    }
+
+    wchar_t cmdline[4096];
+    cmdline[0] = L'\0';
+
+    for (int i = 0; args[i]; ++i) {
+        append_quoted_arg_w(cmdline, sizeof(cmdline) / sizeof(cmdline[0]), args[i]);
+    }
+
+    wprintf(L"CMDLINE = [%ls]\n", cmdline);
+
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    ZeroMemory(&pi, sizeof(pi));
+    si.cb = sizeof(si);
+
+    BOOL ok = CreateProcessW(
+        NULL,
+        cmdline,
+        NULL,
+        NULL,
+        FALSE,
+        0,
+        NULL,
+        NULL,
+        &si,
+        &pi
+    );
+
+    if (!ok) {
+        fprintf(stderr, "CreateProcessW failed: %lu\n", GetLastError());
         return kDIALStatusStopped;
     }
 
-    *run_id = (void*)pid;
+    CloseHandle(pi.hThread);
+
+    *run_id = (void*)pi.hProcess;
+
     return kDIALStatusRunning;
 }
 
@@ -259,12 +340,47 @@ static DIALStatus youtube_start(DIALServer *ds, const char *appname,
     } else {
       snprintf( url, sizeof(url), "https://www.youtube.com/tv");
     }
-    snprintf( data, sizeof(data), "--user-data-dir=%s/.config/google-chrome-dial", getenv("HOME") );
+#ifdef _WIN32
+    // Windows：选一个独立 profile 目录，避免污染主 Chrome
+    const char* base = getenv("LOCALAPPDATA");   // 如 C:\Users\你\AppData\Local
+    if (!base) {
+        base = getenv("TEMP");
+    }
+    if (!base) {
+        base = "C:\\ChromeDialProfile";
+    }
+    // 例如：C:\Users\你\AppData\Local\Google\Chrome\DialUserData
+    snprintf(data, sizeof(data),
+        "--user-data-dir=%s\\Google\\Chrome\\DialUserData", base);
 
-    const char * const youtube_args[] = { spAppYouTubeExecutable,
-      spYouTubePS3UserAgent,
-      data, "--app", url, NULL
+    const char* const youtube_args[] = {
+        spAppYouTubeExecutable,   // 0) C:\Program Files\Google\Chrome\Application\chrome.exe
+        spYouTubePS3UserAgent,    // 1) --user-agent=Mozilla/5.0 (PS3; Leanback Shell) ...
+        data,                     // 2) --user-data-dir=...
+        "--app",                  // 3)
+        url,                      // 4) https://www.youtube.com/tv?...
+        NULL
     };
+
+#else   // 非 Windows（原来的 Linux 行为）
+
+    const char* home = getenv("HOME");
+    if (!home) {
+        home = "";
+    }
+    snprintf(data, sizeof(data),
+        "--user-data-dir=%s/.config/google-chrome-dial", home);
+
+    const char* const youtube_args[] = {
+        spAppYouTubeExecutable,
+        spYouTubePS3UserAgent,
+        data,
+        "--app",
+        url,
+        NULL
+    };
+
+#endif
     runApplication( youtube_args, run_id );
 
     return kDIALStatusRunning;

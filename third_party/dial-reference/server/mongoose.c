@@ -711,30 +711,35 @@ static void reset_per_request_attributes(struct mg_connection *conn) {
 }
 
 static void close_socket_gracefully(SOCKET sock) {
-  char buf[BUFSIZ];
-  int n;
+#ifdef _WIN32
+    if (sock == INVALID_SOCKET || sock == 0) {
+       fprintf(stderr, "close_socket_gracefully: invalid socket=%lld\n", (long long)sock);
+        return;
+    }
 
-  // Send FIN to the client
-  (void) shutdown(sock, SHUT_WR);
-  set_non_blocking_mode(sock);
+    shutdown(sock, SD_SEND);
 
-  // Read and discard pending data. If we do not do that and close the
-  // socket, the data in the send buffer may be discarded. This
-  // behaviour is seen on Windows, when client keeps sending data
-  // when server decide to close the connection; then when client
-  // does recv() it gets no data back.
-  do {
-    n = pull(sock, buf, sizeof(buf));
-  } while (n > 0);
+    closesocket(sock);
+#else
+    char buf[BUFSIZ];
+    int n;
 
-  // Now we know that our FIN is ACK-ed, safe to close
-  (void) close(sock);
+    (void)shutdown(sock, SHUT_WR);
+    set_non_blocking_mode(sock);
+
+    do {
+        n = pull(sock, buf, sizeof(buf));
+    } while (n > 0);
+
+    (void)close(sock);
+#endif
 }
 
 static void close_connection(struct mg_connection *conn) {
-  if (conn->client.sock != INVALID_SOCKET) {
-    close_socket_gracefully(conn->client.sock);
-  }
+    if (conn->client.sock != INVALID_SOCKET && conn->client.sock != 0) {
+        close_socket_gracefully(conn->client.sock);
+        conn->client.sock = INVALID_SOCKET;
+    }
 }
 
 static void discard_current_request_from_buffer(struct mg_connection *conn) {

@@ -302,11 +302,16 @@ static void handle_mcast(char *hw_addr) {
         exit(1);
     }
     saddr.sin_family = AF_INET;
-    saddr.sin_addr.s_addr = inet_addr("239.255.255.250");
+    saddr.sin_addr.s_addr = htonl(INADDR_ANY);
     saddr.sin_port = htons(1900);
 
     if (-1 == bind(s, (struct sockaddr *)&saddr, sizeof(saddr))) {
+#ifdef _WIN32
+        int werr = WSAGetLastError();
+        fprintf(stderr, "bind failed, WSAGetLastError = %d\n", werr);
+#else
         perror("bind");
+#endif
         exit(1);
     }
     mreq.imr_multiaddr.s_addr = inet_addr("239.255.255.250");
