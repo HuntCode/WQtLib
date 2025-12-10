@@ -106,6 +106,30 @@ static struct mg_context *ctx;
 
 bool wakeOnWifiLan=true;
 
+#ifdef _WIN32
+
+// addr 为主机字节序的 IPv4 地址（例如 0xC0A806E6 = 192.168.6.230）
+static int is_private_ipv4_address(DWORD addr)
+{
+    // 10.0.0.0/8
+    if ((addr & 0xFF000000) == 0x0A000000) {
+        return 1;
+    }
+
+    // 172.16.0.0/12  -> 172.16.0.0 ~ 172.31.255.255
+    if ((addr & 0xFFF00000) == 0xAC100000) {
+        return 1;
+    }
+
+    // 192.168.0.0/16
+    if ((addr & 0xFFFF0000) == 0xC0A80000) {
+        return 1;
+    }
+
+    return 0;
+}
+#endif
+
 static void *request_handler(enum mg_event event,
                              struct mg_connection *conn,
                              const struct mg_request_info *request_info) {
@@ -143,12 +167,12 @@ static char * get_local_address() {
 #ifdef _WIN32
     // ---- Windows 实现：用 GetAdaptersAddresses 拿 IP + MAC ----
     ULONG flags = GAA_FLAG_SKIP_ANYCAST |
-                  GAA_FLAG_SKIP_MULTICAST |
-                  GAA_FLAG_SKIP_DNS_SERVER;
+        GAA_FLAG_SKIP_MULTICAST |
+        GAA_FLAG_SKIP_DNS_SERVER |
+        GAA_FLAG_INCLUDE_GATEWAYS;
     ULONG family = AF_INET;  // 只关心 IPv4
     ULONG bufLen = 0;
-    IP_ADAPTER_ADDRESSES *addresses = NULL;
-    IP_ADAPTER_ADDRESSES *addr = NULL;
+    IP_ADAPTER_ADDRESSES* addresses = NULL;
     DWORD ret;
 
     // 第一次调用只是为了拿需要的 buffer 大小
@@ -158,7 +182,7 @@ static char * get_local_address() {
         return NULL;
     }
 
-    addresses = (IP_ADAPTER_ADDRESSES *)malloc(bufLen);
+    addresses = (IP_ADAPTER_ADDRESSES*)malloc(bufLen);
     if (!addresses) {
         fprintf(stderr, "GetAdaptersAddresses: OOM\n");
         return NULL;
@@ -171,54 +195,80 @@ static char * get_local_address() {
         return NULL;
     }
 
-    char *hw = NULL;
+    char* hw = NULL;
 
-    for (addr = addresses; addr != NULL; addr = addr->Next) {
-        // 跳过环回接口
+    for (IP_ADAPTER_ADDRESSES* addr = addresses; addr != NULL; addr = addr->Next) {
+        // 1) 跳过环回接口
         if (addr->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
             continue;
         }
+        // 2) 必须是 UP
         if (addr->OperStatus != IfOperStatusUp) {
             continue;
         }
+        // 3) 必须有默认网关（排除 VMware Host-only / ICS 等）
+        if (addr->FirstGatewayAddress == NULL) {
+            continue;
+        }
 
-        // 找 IPv4 地址
-        IP_ADAPTER_UNICAST_ADDRESS *u;
-        for (u = addr->FirstUnicastAddress; u != NULL; u = u->Next) {
-            if (u->Address.lpSockaddr->sa_family != AF_INET)
+        // 4) 找 IPv4 地址
+        for (IP_ADAPTER_UNICAST_ADDRESS* u = addr->FirstUnicastAddress;
+            u != NULL;
+            u = u->Next) {
+
+            if (!u->Address.lpSockaddr ||
+                u->Address.lpSockaddr->sa_family != AF_INET) {
                 continue;
+            }
 
-            struct sockaddr_in *sa = (struct sockaddr_in *)u->Address.lpSockaddr;
-            const char *ip = inet_ntoa(sa->sin_addr);
+            struct sockaddr_in* sa = (struct sockaddr_in*)u->Address.lpSockaddr;
+
+            DWORD addr_n = sa->sin_addr.S_un.S_addr; // 网络序
+            DWORD a = ntohl(addr_n);            // 主机序
+
+            // 4.1) 排除 APIPA：169.254.x.x
+            if ((a & 0xFFFF0000) == 0xA9FE0000) {
+                continue;
+            }
+
+            // 4.2) 只保留 RFC1918 私网地址
+            if (!is_private_ipv4_address(a)) {
+                continue;
+            }
+
+            // 走到这里说明这是我们要的 IP
+            const char* ip = inet_ntoa(sa->sin_addr);
             if (!ip) {
                 continue;
             }
 
-            // 保存 IP 字符串到全局 ip_addr（用于 dd.xml 等）
+            // 保存 IP 字符串到全局 ip_addr（用于 dd.xml、LOCATION 等）
             strncpy(ip_addr, ip, sizeof(ip_addr) - 1);
             ip_addr[sizeof(ip_addr) - 1] = '\0';
 
+            printf("get_local_address: choose interface IP %s\n", ip_addr);
+
             // 生成 MAC 字符串
             if (addr->PhysicalAddressLength >= 6) {
-                hw = (char *)malloc(HW_ADDRSTRLEN);
+                hw = (char*)malloc(HW_ADDRSTRLEN);
                 if (!hw) {
                     free(addresses);
                     return NULL;
                 }
                 snprintf(hw, HW_ADDRSTRLEN,
-                         "%02X:%02X:%02X:%02X:%02X:%02X",
-                         addr->PhysicalAddress[0],
-                         addr->PhysicalAddress[1],
-                         addr->PhysicalAddress[2],
-                         addr->PhysicalAddress[3],
-                         addr->PhysicalAddress[4],
-                         addr->PhysicalAddress[5]);
+                    "%02X:%02X:%02X:%02X:%02X:%02X",
+                    addr->PhysicalAddress[0],
+                    addr->PhysicalAddress[1],
+                    addr->PhysicalAddress[2],
+                    addr->PhysicalAddress[3],
+                    addr->PhysicalAddress[4],
+                    addr->PhysicalAddress[5]);
             }
-            break;
+            break; // 这个 adapter 已经选中了
         }
 
         if (hw) {
-            break;  // 找到一个合适的接口就够了
+            break; // 全局只要找一个“最佳”接口即可
         }
     }
 
