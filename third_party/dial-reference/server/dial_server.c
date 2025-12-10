@@ -362,7 +362,8 @@ static void handle_app_status(struct mg_connection *conn,
             dial_state_str,
             localState == kDIALStatusStopped ?
                     "" : "  <link rel=\"run\" href=\"run\"/>\r\n",
-            dial_data);
+            "");
+            //dial_data);
     ds_unlock(ds);
 }
 
@@ -387,8 +388,8 @@ static void handle_app_stop(struct mg_connection *conn,
 
         // update the application state
         if (app) {
-            app->state = app->callbacks.status_cb(ds, app_name, app->run_id,
-                                                  &canStop, app->callback_data);
+            app->state = kDIALStatusRunning;// app->callbacks.status_cb(ds, app_name, app->run_id,
+                                              //    &canStop, app->callback_data);
         }
 
         if (!app || app->state == kDIALStatusStopped) {
