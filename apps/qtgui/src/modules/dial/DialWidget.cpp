@@ -1,17 +1,22 @@
 #include "modules/dial/DialWidget.h"
 #include "ui_DialWidget.h"
 
+#include "wqt_dial_server.h"   // 注意：现在是 C++ 类，不要再 extern "C"
+
 #include <QPushButton>
 #include <QTextEdit>
 #include <QScrollBar>
-#include <QMutexLocker>
+#include <QDateTime>
+#include <QVBoxLayout>
+#include <QUrl>
 
-#include "wqt_dial_server.h"
+#include <QtWebEngineWidgets/QWebEngineView>
+#include <QtWebEngineCore/QWebEngineProfile>
+#include <QtWebEngineCore/QWebEngineSettings>
 
-static QString fmtSession(uint32_t sid)
+static QString nowTag()
 {
-    // 方便看：十六进制 + 0 填充
-    return QString("0x%1").arg(sid, 8, 16, QChar('0'));
+    return QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
 }
 
 DialWidget::DialWidget(QWidget* parent)
@@ -22,133 +27,135 @@ DialWidget::DialWidget(QWidget* parent)
 
     connect(ui->btnStartDial, &QPushButton::clicked, this, &DialWidget::onStartClicked);
     connect(ui->btnStopDial,  &QPushButton::clicked, this, &DialWidget::onStopClicked);
-    connect(ui->btnClearLog, &QPushButton::clicked, this, &DialWidget::onClearLogClicked);
+    connect(ui->btnClearLog,  &QPushButton::clicked, this, &DialWidget::onClearLogClicked);
 
     ui->textLog->setReadOnly(true);
 
-    // 直接创建 C++ 封装对象（QObject 子对象）
+    ensureWebView();
+
+    // 创建 DIAL server（QObject，挂到 DialWidget 下面自动析构）
     m_server = new WQtDialServer(this);
 
-    // 信号：这些会被投递回 Qt 线程（你 wqt_dial_server.cpp 里已经做了 QueuedConnection）
+    // Qt 信号：已经在 wqt_dial_server.cpp 里做了 QueuedConnection 投递到 Qt 线程
     connect(m_server, &WQtDialServer::youtubeStart, this, &DialWidget::onYoutubeStart);
     connect(m_server, &WQtDialServer::youtubeStop,  this, &DialWidget::onYoutubeStop);
     connect(m_server, &WQtDialServer::youtubeHide,  this, &DialWidget::onYoutubeHide);
 
-    // 同步状态查询：底层在处理 /apps/YouTube 的 status/hide 时会问这个
-    // 这里一定要“快 + 线程安全”
+    // 状态回调：必须同步/快速/线程安全（别直接碰 UI）
     m_server->setYoutubeStatusCallback([this](uint32_t sessionId, bool& canStop) -> bool {
         canStop = true;
-        QMutexLocker lk(&m_sessionsMutex);
-        return m_activeSessions.contains(sessionId);
+        std::lock_guard<std::mutex> lk(m_sessionsMu);
+        return (m_runningSessions.find(sessionId) != m_runningSessions.end());
     });
 
-    appendLog(tr("[INFO] DialWidget ready. Click Start to run DIAL server."));
+    appendLog(QString("[%1] DialWidget ready.").arg(nowTag()));
 }
 
 DialWidget::~DialWidget()
 {
-    if (m_server) {
-        // 先断开同步回调，避免析构期间被底层线程问状态时访问到 this
-        m_server->setYoutubeStatusCallback({});
+    // m_server 是 QObject child，会自动析构；它自己的析构里也会 stop/uninit（双保险）
+    delete ui;
+}
 
-        // 防御性：你 WQtDialServer 析构里也会 stop/uninit，但这里主动做一遍更直观
-        m_server->stop();
-        m_server->uninit();
+void DialWidget::ensureWebView()
+{
+    if (m_view) return;
 
-        // m_server 是 this 的子对象，会自动 delete
-        m_server = nullptr;
+    // ui 里 videoContainer 是 native=true 且没 layout，需要我们自己补一个 layout 再塞控件进去
+    if (!ui->videoContainer->layout()) {
+        auto* lay = new QVBoxLayout(ui->videoContainer);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(0);
+        ui->videoContainer->setLayout(lay);
     }
 
-    delete ui;
+    m_view = new QWebEngineView(ui->videoContainer);
+    ui->videoContainer->layout()->addWidget(m_view);
+
+    // 让 YouTube TV 更像“客厅端”
+    m_view->page()->profile()->setHttpUserAgent(
+        "Mozilla/5.0 (PlayStation 3; 3.55) AppleWebKit/531.22.8 "
+        "(KHTML, like Gecko) Version/4.0 Safari/531.22.8");
+
+    // 测试阶段尽量别被手势策略卡住（后面你可以再收紧）
+    m_view->settings()->setAttribute(QWebEngineSettings::PlaybackRequiresUserGesture, false);
+
+    m_view->setUrl(QUrl("about:blank"));
 }
 
 void DialWidget::onStartClicked()
 {
-    if (!m_server) {
-        appendLog(tr("[ERR ] m_server is null."));
-        return;
-    }
+    if (!m_server) return;
 
-    // 你现在第二阶段只想验证流程：friendly_name 随便先给一个固定值即可
+    // 先 init（你 libs/dial 的 init() 已经决定：init 后不热改参数）
     if (!m_server->isInited()) {
-        const QString friendlyName = "WQtLib DIAL"; // 之后你可以改成从 UI 输入框读取
-        if (!m_server->init(friendlyName)) {
-            appendLog(tr("[ERR ] HHDialInit failed (WQtDialServer::init)."));
+        const bool ok = m_server->init("WQtLib DIAL");
+        if (!ok) {
+            appendLog(QString("[%1] [ERR ] DIAL init failed.").arg(nowTag()));
             return;
         }
-        appendLog(tr("[INFO] init OK, friendly_name=%1").arg(friendlyName));
+        appendLog(QString("[%1] [INFO] DIAL inited.").arg(nowTag()));
     }
 
-    if (!m_server->start()) {
-        appendLog(tr("[ERR ] HHDialStart failed (WQtDialServer::start)."));
-        return;
+    if (m_server->start()) {
+        appendLog(QString("[%1] [INFO] DIAL started.").arg(nowTag()));
+    } else {
+        appendLog(QString("[%1] [ERR ] DIAL start failed.").arg(nowTag()));
     }
-
-    appendLog(tr("[INFO] DIAL server started."));
 }
 
 void DialWidget::onStopClicked()
 {
-    if (!m_server) {
-        appendLog(tr("[WARN] DIAL server not created."));
-        return;
-    }
-
-    if (!m_server->isStarted()) {
-        appendLog(tr("[WARN] DIAL server not started."));
-        return;
-    }
+    if (!m_server) return;
 
     m_server->stop();
 
-    // 测试阶段：服务停了就清空会话集合
     {
-        QMutexLocker lk(&m_sessionsMutex);
-        m_activeSessions.clear();
+        std::lock_guard<std::mutex> lk(m_sessionsMu);
+        m_runningSessions.clear();
     }
 
-    appendLog(tr("[INFO] DIAL server stopped."));
+    appendLog(QString("[%1] [INFO] DIAL stopped.").arg(nowTag()));
 }
 
 void DialWidget::onClearLogClicked()
 {
-    if (!ui || !ui->textLog) return;
     ui->textLog->clear();
 }
 
 void DialWidget::onYoutubeStart(uint32_t sessionId, const QString& url)
 {
     {
-        QMutexLocker lk(&m_sessionsMutex);
-        m_activeSessions.insert(sessionId);
+        std::lock_guard<std::mutex> lk(m_sessionsMu);
+        m_runningSessions.insert(sessionId);
     }
 
-    appendLog(tr("[YT  ] start session=%1").arg(fmtSession(sessionId)));
-    appendLog(tr("      url=%1").arg(url));
+    appendLog(QString("[%1] [YT  ] start sid=%2 url=%3")
+                  .arg(nowTag()).arg(sessionId).arg(url));
+
+    ensureWebView();
+    m_view->setUrl(QUrl(url));
 }
 
 void DialWidget::onYoutubeStop(uint32_t sessionId)
 {
     {
-        QMutexLocker lk(&m_sessionsMutex);
-        m_activeSessions.remove(sessionId);
+        std::lock_guard<std::mutex> lk(m_sessionsMu);
+        m_runningSessions.erase(sessionId);
     }
 
-    appendLog(tr("[YT  ] stop  session=%1").arg(fmtSession(sessionId)));
+    appendLog(QString("[%1] [YT  ] stop  sid=%2").arg(nowTag()).arg(sessionId));
 }
 
 void DialWidget::onYoutubeHide(uint32_t sessionId)
 {
-    // hide 语义你后面可以再定义：这里先只打印，不改变 running 集合
-    appendLog(tr("[YT  ] hide  session=%1").arg(fmtSession(sessionId)));
+    appendLog(QString("[%1] [YT  ] hide  sid=%2").arg(nowTag()).arg(sessionId));
 }
 
 void DialWidget::appendLog(const QString& text)
 {
-    if (!ui || !ui->textLog) return;
-
     ui->textLog->append(text);
-
-    auto* bar = ui->textLog->verticalScrollBar();
-    if (bar) bar->setValue(bar->maximum());
+    if (auto* bar = ui->textLog->verticalScrollBar()) {
+        bar->setValue(bar->maximum());
+    }
 }

@@ -1,13 +1,16 @@
 #pragma once
 
 #include <QWidget>
-#include <QSet>
-#include <QMutex>
+#include <QString>
+#include <cstdint>
+#include <mutex>
+#include <unordered_set>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class DialWidget; }
 QT_END_NAMESPACE
 
+class QWebEngineView;
 class WQtDialServer;
 
 class DialWidget : public QWidget
@@ -28,12 +31,15 @@ private slots:
 
 private:
     void appendLog(const QString& text);
+    void ensureWebView(); // 把 QWebEngineView 塞进 videoContainer
 
 private:
     Ui::DialWidget* ui = nullptr;
-    WQtDialServer*  m_server = nullptr;
 
-    // 仅用于测试：用 sessionId 维护一个“运行中集合”，提供给 status 回调同步查询
-    QMutex m_sessionsMutex;
-    QSet<uint32_t> m_activeSessions;
+    WQtDialServer*  m_server = nullptr;
+    QWebEngineView* m_view = nullptr;
+
+    // 用于 status 回调：DIAL 的 status/hide 是“网络线程”语境，得线程安全
+    std::mutex m_sessionsMu;
+    std::unordered_set<uint32_t> m_runningSessions;
 };

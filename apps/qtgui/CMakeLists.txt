@@ -1,7 +1,25 @@
 # apps/qtgui/CMakeLists.txt
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets WebEngineWidgets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets WebEngineWidgets)
+
+#find_package(Qt6WebEngineWidgets CONFIG QUIET)
+#
+#message(STATUS "Qt6WebEngineWidgets_FOUND=${Qt6WebEngineWidgets_FOUND}")
+#message(STATUS "Qt6WebEngineWidgets_DIR=${Qt6WebEngineWidgets_DIR}")
+#message(STATUS "Qt6WebEngineWidgets_NOT_FOUND_MESSAGE=${Qt6WebEngineWidgets_NOT_FOUND_MESSAGE}")
+#message(STATUS "QT_NO_CREATE_TARGETS='${QT_NO_CREATE_TARGETS}'")
+#
+#if(TARGET Qt6::WebEngineWidgets)
+#  message(STATUS "Target Qt6::WebEngineWidgets exists.")
+#else()
+#  message(STATUS "Target Qt6::WebEngineWidgets NOT exists.")
+#endif()
+#
+#find_package(Qt6WebEngineCore CONFIG QUIET)
+#message(STATUS "Qt6WebEngineCore_FOUND=${Qt6WebEngineCore_FOUND}")
+#message(STATUS "Qt6WebEngineCore_DIR=${Qt6WebEngineCore_DIR}")
+#message(STATUS "Qt6WebEngineCore_NOT_FOUND_MESSAGE=${Qt6WebEngineCore_NOT_FOUND_MESSAGE}")
 
 set(QTGUI_SOURCES
     src/main.cpp
@@ -47,9 +65,10 @@ endif()
 
 target_link_libraries(QtGui 
     PRIVATE 
-	    Qt${QT_VERSION_MAJOR}::Widgets
-		wqt_dial
-                wqt_ble
+            Qt${QT_VERSION_MAJOR}::Widgets
+            Qt${QT_VERSION_MAJOR}::WebEngineWidgets
+            wqt_dial
+            wqt_ble
 )
 
 target_include_directories(QtGui PRIVATE
