@@ -26,6 +26,8 @@
 #ifndef DIAL_SERVER_H_
 #define DIAL_SERVER_H_
 
+#include <stdint.h>
+
 #ifdef _WIN32
 typedef unsigned short in_port_t;
 #else
@@ -87,24 +89,24 @@ typedef void * DIAL_run_t;
 typedef DIALStatus (*DIAL_app_start_cb)(DIALServer *ds, const char *app_name,
                                         const char *payload, const char *query_string,
                                         const char *additionalDataUrl,
-                                        DIAL_run_t *run_id, void *callback_data);
+                                        uint32_t session_id, DIAL_run_t *run_id, void *callback_data);
 
 /*
  * DIAL hide callback
  */
 typedef DIALStatus (*DIAL_app_hide_cb)(DIALServer *ds, const char *app_name,
-                                        DIAL_run_t *run_id, void *callback_data);
+                                        uint32_t session_id, DIAL_run_t *run_id, void *callback_data);
 
 /*
  * DIAL stop callback
  */
 typedef void (*DIAL_app_stop_cb)(DIALServer *ds, const char *app_name,
-                                 DIAL_run_t run_id, void *callback_data);
+                                 uint32_t session_id,DIAL_run_t run_id, void *callback_data);
 /*
  * DIAL status callback
  */
 typedef DIALStatus (*DIAL_app_status_cb)(DIALServer *ds, const char *app_name,
-                                         DIAL_run_t run_id, int* pCanStop,
+                                         uint32_t session_id,DIAL_run_t run_id, int* pCanStop,
                                          void *callback_data);
 
 /*

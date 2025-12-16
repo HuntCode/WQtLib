@@ -161,6 +161,8 @@ void mg_send_http_error(struct mg_connection *conn, int status,
 int mg_get_listen_addr(struct mg_context *ctx, struct sockaddr *addr,
                        socklen_t *addrlen);
 
+int mg_get_session_id(struct mg_connection* conn);
+
 #ifdef __cplusplus
 }
 #endif // __cplusplus

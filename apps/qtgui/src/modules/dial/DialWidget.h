@@ -1,14 +1,14 @@
 #pragma once
 
 #include <QWidget>
-
-extern "C" {
-#include "wqt_dial_server.h"
-}
+#include <QSet>
+#include <QMutex>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class DialWidget; }
 QT_END_NAMESPACE
+
+class WQtDialServer;
 
 class DialWidget : public QWidget
 {
@@ -22,11 +22,18 @@ private slots:
     void onStopClicked();
     void onClearLogClicked();
 
+    void onYoutubeStart(uint32_t sessionId, const QString& url);
+    void onYoutubeStop(uint32_t sessionId);
+    void onYoutubeHide(uint32_t sessionId);
+
 private:
     void appendLog(const QString& text);
-    static void logCallback(void* user_data, int level, const char* message);
 
 private:
     Ui::DialWidget* ui = nullptr;
-    WqtDialServer*  m_server = nullptr;
+    WQtDialServer*  m_server = nullptr;
+
+    // 仅用于测试：用 sessionId 维护一个“运行中集合”，提供给 status 回调同步查询
+    QMutex m_sessionsMutex;
+    QSet<uint32_t> m_activeSessions;
 };

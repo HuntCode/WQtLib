@@ -658,6 +658,13 @@ int mg_get_listen_addr(struct mg_context *ctx,
   return 1;
 }
 
+int mg_get_session_id(struct mg_connection* conn) {
+    if (!conn) return 0;
+
+    /* network-order IPv4 -> host-order uint32_t */
+    return (uint32_t)ntohl(conn->client.remote_addr.sin_addr.s_addr);
+}
+
 static int set_ports_option(struct mg_context *ctx, int port) {
   int reuseaddr = 1, success = 1;
   socklen_t sock_len = sizeof(ctx->local_address);
@@ -813,7 +820,7 @@ static void process_new_connection(struct mg_connection *conn) {
 // Worker threads take accepted socket from the queue
 static int consume_socket(struct mg_context *ctx, struct socket *sp) {
   (void) pthread_mutex_lock(&ctx->mutex);
-  DEBUG_TRACE(("going idle"));
+  //DEBUG_TRACE(("going idle"));
 
   // If the queue is empty, wait. We're idle at this point.
   while (ctx->sq_head == ctx->sq_tail && ctx->stop_flag == 0) {

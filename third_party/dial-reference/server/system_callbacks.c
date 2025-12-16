@@ -29,7 +29,7 @@
 extern char spSleepPassword[];
 
 DIALStatus system_start(DIALServer *ds, const char *appname, const char *payload, const char* query_string,
-                        const char *additionalDataUrl, DIAL_run_t *run_id, void *callback_data) {
+                        const char *additionalDataUrl, uint32_t session_id, DIAL_run_t *run_id, void *callback_data) {
 
     /* Can't launch system app */
     if (0 == query_string) {
@@ -63,13 +63,13 @@ DIALStatus system_start(DIALServer *ds, const char *appname, const char *payload
 }
 
 DIALStatus system_hide(DIALServer *ds, const char *app_name,
-                       DIAL_run_t *run_id, void *callback_data) {
+                       uint32_t session_id,DIAL_run_t *run_id, void *callback_data) {
     // Always hidden
     return kDIALStatusHide;
 }
 
 DIALStatus system_status(DIALServer *ds, const char *appname,
-                         DIAL_run_t run_id, int* pCanStop, void *callback_data) {
+                         uint32_t session_id,DIAL_run_t run_id, int* pCanStop, void *callback_data) {
     // Always hidden
     return kDIALStatusHide;
 }

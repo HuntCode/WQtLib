@@ -9,12 +9,14 @@ set(DIALSERVER_SOURCES
     ${DIALSERVER_SRC_DIR}/dial_options.h
     ${DIALSERVER_SRC_DIR}/dial_server.c
     ${DIALSERVER_SRC_DIR}/dial_server.h
-    ${DIALSERVER_SRC_DIR}/main.c
+    ${DIALSERVER_SRC_DIR}/hh_dial.c
+    ${DIALSERVER_SRC_DIR}/hh_dial.h
     ${DIALSERVER_SRC_DIR}/mongoose.c
     ${DIALSERVER_SRC_DIR}/mongoose.h
     #${DIALSERVER_SRC_DIR}/nf_callbacks.c
     #${DIALSERVER_SRC_DIR}/nf_callbacks.h
     ${DIALSERVER_SRC_DIR}/quick_ssdp.c
+    ${DIALSERVER_SRC_DIR}/quick_ssdp.h
     ${DIALSERVER_SRC_DIR}/system_callbacks.c
     ${DIALSERVER_SRC_DIR}/system_callbacks.h
     ${DIALSERVER_SRC_DIR}/url_lib.c
@@ -22,23 +24,25 @@ set(DIALSERVER_SOURCES
 )
 source_group(src FILES ${DIALSERVER_SOURCES})
 
-add_executable(dialserver
+add_library(dial STATIC
     ${DIALSERVER_SOURCES}
     vcpkg.json
 )
 
-target_include_directories(dialserver
-    PRIVATE
+target_include_directories(dial
+    PUBLIC
         ${DIALSERVER_SRC_DIR}
 )
 
 # C 标准
-set_property(TARGET dialserver PROPERTY C_STANDARD 99)
-set_property(TARGET dialserver PROPERTY C_STANDARD_REQUIRED ON)
+set_property(TARGET dial PROPERTY C_STANDARD 99)
+set_property(TARGET dial PROPERTY C_STANDARD_REQUIRED ON)
+
+set_target_properties(dial PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 常用编译选项
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(dialserver PRIVATE
+    target_compile_options(dial PRIVATE
         -Wall
         -g
         -fPIC
@@ -46,7 +50,7 @@ if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     )
 elseif (MSVC)
     # Windows / MSVC 下建议关掉一些烦人的 CRT 警告
-    target_compile_definitions(dialserver PRIVATE
+    target_compile_definitions(dial PRIVATE
         _CRT_SECURE_NO_WARNINGS
         _CRT_NONSTDC_NO_DEPRECATE
     )
@@ -54,19 +58,19 @@ elseif (MSVC)
 endif()
 
 # Debug 配置下等价 Makefile 的 -DDEBUG
-target_compile_definitions(dialserver PRIVATE
+target_compile_definitions(dial PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
 )
 
 # 平台相关链接
 if (UNIX AND NOT APPLE)
-    target_link_libraries(dialserver PRIVATE
+    target_link_libraries(dial PRIVATE
         dl
         pthread
     )
 elseif (WIN32)
     find_package(PThreads4W REQUIRED)
-    target_link_libraries(dialserver PRIVATE
+    target_link_libraries(dial PRIVATE
         PThreads4W::PThreads4W
         ws2_32
         Iphlpapi

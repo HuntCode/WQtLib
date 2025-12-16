@@ -212,10 +212,11 @@ static void handle_app_start(struct mg_connection *conn,
                         dial_port, app_name);
             }
             fprintf(stderr, "Starting the app with params %s\n", body);
+            uint32_t session_id = mg_get_session_id(conn);
             app->state = app->callbacks.start_cb(ds, app_name, body,
                                                  request_info->query_string,
                                                  additional_data_param, 
-                                                 &app->run_id,
+                                                 session_id, &app->run_id,
                                                  app->callback_data);
             if (app->state == kDIALStatusRunning) {
                 mg_printf(
@@ -316,8 +317,8 @@ static void handle_app_status(struct mg_connection *conn,
         free(encoded_key); encoded_key = NULL;
         free(encoded_value); encoded_value = NULL;
     }
-
-    app->state = app->callbacks.status_cb(ds, app_name, app->run_id, &canStop,
+    uint32_t session_id = mg_get_session_id(conn);
+    app->state = app->callbacks.status_cb(ds, app_name, session_id, app->run_id, &canStop,
                                           app->callback_data);
 
     DIALStatus localState = app->state;
@@ -395,7 +396,8 @@ static void handle_app_stop(struct mg_connection *conn,
         if (!app || app->state == kDIALStatusStopped) {
             mg_send_http_error(conn, 404, "Not Found", "Not Found");
         } else {
-            app->callbacks.stop_cb(ds, app_name, app->run_id, app->callback_data);
+            uint32_t session_id = mg_get_session_id(conn);
+            app->callbacks.stop_cb(ds, app_name, session_id, app->run_id, app->callback_data);
             app->state = kDIALStatusStopped;
             mg_printf(conn, "HTTP/1.1 200 OK\r\n"
                       "Content-Type: text/plain\r\n"
@@ -421,9 +423,11 @@ static void handle_app_hide(struct mg_connection *conn,
     }
     app = *find_app(ds, app_name);
   
+    uint32_t session_id = mg_get_session_id(conn);
+
     // update the application state
     if (app) {
-        app->state = app->callbacks.status_cb(ds, app_name, app->run_id,
+        app->state = app->callbacks.status_cb(ds, app_name, session_id, app->run_id,
                                               &canStop, app->callback_data);
     }
     
@@ -431,7 +435,7 @@ static void handle_app_hide(struct mg_connection *conn,
         mg_send_http_error(conn, 404, "Not Found", "Not Found");
     } else {
         // not implemented in reference
-        DIALStatus status = app->callbacks.hide_cb(ds, app_name, app->run_id, app->callback_data);
+        DIALStatus status = app->callbacks.hide_cb(ds, app_name, session_id, app->run_id, app->callback_data);
         if (status != kDIALStatusHide){
             fprintf(stderr, "Hide not implemented for reference.\n");
             mg_send_http_error(conn, 501, "Not Implemented",

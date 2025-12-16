@@ -106,6 +106,8 @@ static struct mg_context *ctx;
 
 bool wakeOnWifiLan=true;
 
+extern int HHDialInternal_ShouldStop(void);
+
 #ifdef _WIN32
 
 // addr 为主机字节序的 IPv4 地址（例如 0xC0A806E6 = 192.168.6.230）
@@ -332,101 +334,190 @@ static char * get_local_address() {
 }
 
 static void handle_mcast(char *hw_addr) {
-    int s, one = 1, bytes;
+#ifdef _WIN32
+    SOCKET s = INVALID_SOCKET;
+#else
+    int s = -1;
+#endif
+    int one = 1;
+    int bytes;
     socklen_t addrlen;
-    struct sockaddr_in saddr = {0};
-    struct ip_mreq mreq = {0};
-    char wakeup_buf[sizeof(wakeup_header) + HW_ADDRSTRLEN + STR_TIMEOUTLEN] = {0, };
-    char send_buf[sizeof(ssdp_reply) + INET_ADDRSTRLEN + 256 + 256 + sizeof(wakeup_buf)] = {0,};
+    struct sockaddr_in saddr = { 0 };
+    struct ip_mreq mreq = { 0 };
+
+    char wakeup_buf[sizeof(wakeup_header) + HW_ADDRSTRLEN + STR_TIMEOUTLEN] = { 0 };
+    char send_buf[sizeof(ssdp_reply) + INET_ADDRSTRLEN + 256 + 256 + sizeof(wakeup_buf)] = { 0 };
     int send_size;
+
     if (-1 < wakeup_timeout && wakeOnWifiLan) {
         snprintf(wakeup_buf, sizeof(wakeup_buf), wakeup_header, hw_addr, wakeup_timeout);
     }
     send_size = snprintf(send_buf, sizeof(send_buf), ssdp_reply, ip_addr, my_port, uuid, wakeup_buf);
-    if (-1 == (s = socket(AF_INET, SOCK_DGRAM, 0))) {
+
+    /* socket */
+    s = socket(AF_INET, SOCK_DGRAM, 0);
+#ifdef _WIN32
+    if (s == INVALID_SOCKET) {
+        fprintf(stderr, "socket failed: %d\n", (int)WSAGetLastError());
+        return;
+    }
+#else
+    if (s < 0) {
         perror("socket");
-        exit(1);
+        return;
     }
-    if (-1 == setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one))) {
-        perror("reuseaddr");
-        exit(1);
+#endif
+
+    /* reuseaddr */
+    if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one)) < 0) {
+#ifdef _WIN32
+        fprintf(stderr, "setsockopt(SO_REUSEADDR) failed: %d\n", (int)WSAGetLastError());
+        closesocket(s);
+#else
+        perror("setsockopt(SO_REUSEADDR)");
+        close(s);
+#endif
+        return;
     }
+
+    /* bind 1900 */
     saddr.sin_family = AF_INET;
     saddr.sin_addr.s_addr = htonl(INADDR_ANY);
     saddr.sin_port = htons(1900);
 
-    if (-1 == bind(s, (struct sockaddr *)&saddr, sizeof(saddr))) {
+    if (bind(s, (struct sockaddr*)&saddr, sizeof(saddr)) < 0) {
 #ifdef _WIN32
-        int werr = WSAGetLastError();
-        fprintf(stderr, "bind failed, WSAGetLastError = %d\n", werr);
+        fprintf(stderr, "bind failed: %d\n", (int)WSAGetLastError());
+        closesocket(s);
 #else
         perror("bind");
+        close(s);
 #endif
-        exit(1);
+        return;
     }
+
+    /* join multicast */
     mreq.imr_multiaddr.s_addr = inet_addr("239.255.255.250");
     mreq.imr_interface.s_addr = inet_addr(ip_addr);
-    if (-1 == setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-                         &mreq, sizeof(mreq))) {
+
+    if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq)) < 0) {
+#ifdef _WIN32
+        fprintf(stderr, "setsockopt(IP_ADD_MEMBERSHIP) failed: %d\n", (int)WSAGetLastError());
+        closesocket(s);
+#else
         perror("add_membership");
-        exit(1);
+        close(s);
+#endif
+        return;
     }
-    //printf("Starting Multicast handling on 239.255.255.250\n");
-    while (1) {
+
+    /* loop: select + timeout */
+    while (!HHDialInternal_ShouldStop()) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(s, &rfds);
+
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100 * 1000; /* 100ms */
+
+#ifdef _WIN32
+        int ret = select(0, &rfds, NULL, NULL, &tv);
+#else
+        int ret = select(s + 1, &rfds, NULL, NULL, &tv);
+#endif
+
+        if (ret == 0) {
+            /* timeout：回去检查 stop */
+            continue;
+        }
+        if (ret < 0) {
+#ifdef _WIN32
+            int err = (int)WSAGetLastError();
+            /* WSAEINTR 等可忽略，继续轮询 */
+            fprintf(stderr, "select failed: %d\n", err);
+#else
+            perror("select");
+#endif
+            /* 出错也别 exit，直接继续/或 break；这里选择继续 */
+            continue;
+        }
+
+        if (!FD_ISSET(s, &rfds)) {
+            continue;
+        }
+
         addrlen = sizeof(saddr);
-        if (-1 == (bytes = recvfrom(s, gBuf, sizeof(gBuf) - 1, 0,
-                                    (struct sockaddr *)&saddr, &addrlen))) {
+        bytes = recvfrom(s, gBuf, sizeof(gBuf) - 1, 0, (struct sockaddr*)&saddr, &addrlen);
+#ifdef _WIN32
+        if (bytes == SOCKET_ERROR) {
+            int err = (int)WSAGetLastError();
+            fprintf(stderr, "recvfrom failed: %d\n", err);
+            continue;
+        }
+#else
+        if (bytes < 0) {
             perror("recvfrom");
             continue;
         }
-        gBuf[bytes] = 0;
-        // sophisticated SSDP parsing algorithm
-        if (!strstr(gBuf, "urn:dial-multiscreen-org:service:dial:1"))
-            {
-#if 0 // use for debugging
-                printf("Dropping: \n");
-                {
-                    int i;
-                    for (i = 0; i < bytes; i++)
-                        {
-                            putchar(gBuf[i]);
-                        }
-                }
-                printf("\n##### End of DROP #######\n");
 #endif
-                continue;
+
+        gBuf[bytes] = 0;
+
+        if (!strstr(gBuf, "urn:dial-multiscreen-org:service:dial:1")) {
+            continue;
         }
+
         printf("Sending SSDP reply to %s:%d\n",
-               inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
-        if (-1 == sendto(s, send_buf, send_size, 0, (struct sockaddr *)&saddr, addrlen)) {
+            inet_ntoa(saddr.sin_addr), ntohs(saddr.sin_port));
+
+        if (sendto(s, send_buf, send_size, 0, (struct sockaddr*)&saddr, addrlen) < 0) {
+#ifdef _WIN32
+            fprintf(stderr, "sendto failed: %d\n", (int)WSAGetLastError());
+#else
             perror("sendto");
+#endif
             continue;
         }
     }
+
+    /* leave multicast (可选但推荐) */
+    (void)setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP, (char*)&mreq, sizeof(mreq));
+
+    /* close socket */
+#ifdef _WIN32
+    closesocket(s);
+#else
+    close(s);
+#endif
 }
 
 void run_ssdp(int port, const char *pFriendlyName, const char * pModelName, const char *pUuid) {
     char *hw_addr = NULL;
     struct sockaddr sa;
     socklen_t len = sizeof(sa);
+
     if(pFriendlyName) {
         strncpy(friendly_name, pFriendlyName, sizeof(friendly_name));
         friendly_name[sizeof(friendly_name) - 1] = '\0';
     } else {
-        strcpy(friendly_name, "DIAL server sample");
+        strcpy(friendly_name, "HHDIAL_Server");
     }
+
     if(pModelName) {
         strncpy(model_name, pModelName, sizeof(model_name));
         model_name[sizeof(model_name) - 1] = '\0';
     } else {
         strcpy(model_name, "deadbeef-dead-beef-dead-beefdeadbeef");
     }
+
     if(pUuid) {
         strncpy(uuid, pUuid, sizeof(uuid));
         uuid[sizeof(uuid) - 1] = '\0';
     } else {
         strcpy(uuid, "deadbeef-dead-beef-dead-beefdeadbeef");
     }
+
     dial_port = port;
     hw_addr = get_local_address();
     if (hw_addr == NULL) {
@@ -436,13 +527,18 @@ void run_ssdp(int port, const char *pFriendlyName, const char * pModelName, cons
     ctx = mg_start(&request_handler, NULL, SSDP_PORT);
     if (ctx == NULL) {
         printf("Unable to start SSDP master listening thread.");
-    } else {
-        if (mg_get_listen_addr(ctx, &sa, &len)) {
-            my_port = ntohs(((struct sockaddr_in *)&sa)->sin_port);
-        }
-        printf("SSDP listening on %s:%d\n", ip_addr, my_port);
-        handle_mcast(hw_addr);
+        free(hw_addr);
+        return;
+    } 
+    
+    if (mg_get_listen_addr(ctx, &sa, &len)) {
+        my_port = ntohs(((struct sockaddr_in *)&sa)->sin_port);
     }
+    printf("SSDP listening on %s:%d\n", ip_addr, my_port);
+    handle_mcast(hw_addr);
+
+    mg_stop(ctx);
+    ctx = NULL;
+
     free(hw_addr);
-    hw_addr = NULL;
 }
