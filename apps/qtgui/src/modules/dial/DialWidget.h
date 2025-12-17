@@ -20,6 +20,9 @@ public:
     explicit DialWidget(QWidget* parent = nullptr);
     ~DialWidget() override;
 
+protected:
+    void showEvent(QShowEvent* e) override;
+
 private slots:
     void onStartClicked();
     void onStopClicked();
@@ -32,6 +35,7 @@ private slots:
 private:
     void appendLog(const QString& text);
     void ensureWebView(); // 把 QWebEngineView 塞进 videoContainer
+    void applySplitterRatioOnce();
 
 private:
     Ui::DialWidget* ui = nullptr;
@@ -42,4 +46,6 @@ private:
     // 用于 status 回调：DIAL 的 status/hide 是“网络线程”语境，得线程安全
     std::mutex m_sessionsMu;
     std::unordered_set<uint32_t> m_runningSessions;
+
+    bool splitterInited_ = false;
 };

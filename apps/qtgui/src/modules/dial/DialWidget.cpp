@@ -1,7 +1,7 @@
 #include "modules/dial/DialWidget.h"
 #include "ui_DialWidget.h"
 
-#include "wqt_dial_server.h"   // 注意：现在是 C++ 类，不要再 extern "C"
+#include "wqt_dial_server.h"
 
 #include <QPushButton>
 #include <QTextEdit>
@@ -57,6 +57,12 @@ DialWidget::~DialWidget()
     delete ui;
 }
 
+void DialWidget::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    applySplitterRatioOnce();
+}
+
 void DialWidget::ensureWebView()
 {
     if (m_view) return;
@@ -81,6 +87,28 @@ void DialWidget::ensureWebView()
     m_view->settings()->setAttribute(QWebEngineSettings::PlaybackRequiresUserGesture, false);
 
     m_view->setUrl(QUrl("about:blank"));
+}
+
+void DialWidget::applySplitterRatioOnce()
+{
+    if (splitterInited_) return;
+    splitterInited_ = true;
+
+    // 让拖动条更明显一点（不然暗色主题下像“没有 splitter”）
+    ui->splitter->setHandleWidth(6);
+    ui->splitter->setChildrenCollapsible(false);
+
+    // 这俩主要影响 resize 时分配
+    ui->splitter->setStretchFactor(0, 7); // 0=videoContainer
+    ui->splitter->setStretchFactor(1, 3); // 1=logContainer
+
+    // 这个才是“初始就按比例来”
+    const int total = ui->splitter->height();
+    if (total > 0) {
+        const int top = total * 7 / 10;
+        const int bot = total - top;
+        ui->splitter->setSizes({ top, bot });
+    }
 }
 
 void DialWidget::onStartClicked()
