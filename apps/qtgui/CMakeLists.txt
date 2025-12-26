@@ -35,6 +35,8 @@ set(QTGUI_SOURCES
     src/modules/dial/DialWidget.cpp
     src/modules/dial/DialWidget.h
     src/modules/dial/DialWidget.ui
+    src/modules/dial/ythookpage.cpp
+    src/modules/dial/ythookpage.h
 
     src/modules/ble/BleWidget.cpp
     src/modules/ble/BleWidget.h
@@ -50,6 +52,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(QtGui
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+        src/modules/dial/ythookpage.h src/modules/dial/ythookpage.cpp
     )
 else()
     if(ANDROID)

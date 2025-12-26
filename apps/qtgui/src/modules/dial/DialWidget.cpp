@@ -2,6 +2,7 @@
 #include "ui_DialWidget.h"
 
 #include "wqt_dial_server.h"
+#include "YtHookPage.h"
 
 #include <QPushButton>
 #include <QTextEdit>
@@ -9,10 +10,90 @@
 #include <QDateTime>
 #include <QVBoxLayout>
 #include <QUrl>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QWebEngineScript>
+#include <QWebEngineScriptCollection>
+#include <QWebEnginePage>
 
 #include <QtWebEngineWidgets/QWebEngineView>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWebEngineCore/QWebEngineSettings>
+
+static const char* kYtHookJs = R"JS(
+(() => {
+  const PATTERNS = [
+    /\/api\/lounge\/pairing\/generate_screen_id/i,
+    /\/api\/lounge\/pairing\/get_lounge_token_batch/i,
+  ];
+
+  function match(url) {
+    url = String(url || "");
+    return PATTERNS.some(re => re.test(url));
+  }
+
+  function emit(type, payload) {
+    console.log("HHYT|" + type + "|" + JSON.stringify(payload));
+  }
+
+  function tryParse(url, text) {
+    if (!text) return;
+    try {
+      const obj = JSON.parse(text);
+
+      if (obj.screenId) {
+        emit("screenId", { screenId: obj.screenId, screenIdSecret: obj.screenIdSecret || "" });
+      }
+
+      if (obj.screens && obj.screens.length) {
+        const s = obj.screens[0];
+        if (s && s.screenId) {
+          emit("lounge", {
+            screenId: s.screenId,
+            loungeToken: s.loungeToken || "",
+            expiration: s.expiration || 0,
+          });
+        }
+      }
+    } catch (e) {}
+  }
+
+  const _fetch = window.fetch;
+  if (_fetch) {
+    window.fetch = async function (...args) {
+      const res = await _fetch.apply(this, args);
+      try {
+        const url = (args[0] && args[0].url) ? args[0].url : args[0];
+        if (match(url)) {
+          res.clone().text().then(t => tryParse(url, t));
+        }
+      } catch (e) {}
+      return res;
+    };
+  }
+
+  const XHR = XMLHttpRequest.prototype;
+  const _open = XHR.open;
+  const _send = XHR.send;
+
+  XHR.open = function (method, url, ...rest) {
+    this.__hh_url = url;
+    return _open.call(this, method, url, ...rest);
+  };
+
+  XHR.send = function (body) {
+    this.addEventListener("load", function () {
+      const url = this.__hh_url || "";
+      if (match(url)) {
+        tryParse(url, this.responseText);
+      }
+    });
+    return _send.call(this, body);
+  };
+
+  emit("hookReady", { ok: true });
+})();
+)JS";
 
 static QString nowTag()
 {
@@ -86,7 +167,35 @@ void DialWidget::ensureWebView()
     // 测试阶段尽量别被手势策略卡住（后面你可以再收紧）
     m_view->settings()->setAttribute(QWebEngineSettings::PlaybackRequiresUserGesture, false);
 
-    m_view->setUrl(QUrl("about:blank"));
+    auto* page = new YtHookPage(m_view);
+    m_view->setPage(page);
+
+    connect(page, &YtHookPage::screenIdFound, this,
+            [this](const QString& screenId, const QString& secret) {
+                qInfo() << "[YT] screenId =" << screenId << "secret =" << secret;
+                // TODO: 保存到成员变量，后面给 openscreen 的 mdxSessionStatus 用
+            });
+
+    connect(page, &YtHookPage::loungeTokenFound, this,
+            [this](const QString& screenId, const QString& token, qint64 exp) {
+                qInfo() << "[YT] lounge screenId =" << screenId << "token =" << token << "exp =" << exp;
+            });
+
+    QWebEngineScript script;
+    script.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    script.setWorldId(QWebEngineScript::MainWorld);
+    script.setRunsOnSubFrames(true);
+    script.setSourceCode(QString::fromUtf8(kYtHookJs));
+    page->scripts().insert(script);
+
+    //m_view->setUrl(QUrl("about:blank"));
+    m_view->setUrl(QUrl("https://www.youtube.com/tv"));
+
+    QWebEngineView* dev = new QWebEngineView;
+    dev->resize(1200, 800);
+    dev->show();
+
+    m_view->page()->setDevToolsPage(dev->page());
 }
 
 void DialWidget::applySplitterRatioOnce()
