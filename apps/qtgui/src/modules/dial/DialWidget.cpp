@@ -12,6 +12,7 @@
 #include <QUrl>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QElapsedTimer>
 #include <QWebEngineScript>
 #include <QWebEngineScriptCollection>
 #include <QWebEnginePage>
@@ -22,9 +23,13 @@
 
 static const char* kYtHookJs = R"JS(
 (() => {
+  if (window.__hh_yt_hooked) return;
+  window.__hh_yt_hooked = true;
+
   const PATTERNS = [
     /\/api\/lounge\/pairing\/generate_screen_id/i,
     /\/api\/lounge\/pairing\/get_lounge_token_batch/i,
+    /\/api\/lounge\/bc\/bind/i,
   ];
 
   function match(url) {
@@ -33,45 +38,154 @@ static const char* kYtHookJs = R"JS(
   }
 
   function emit(type, payload) {
-    console.log("HHYT|" + type + "|" + JSON.stringify(payload));
+    try { console.log("HHYT|" + type + "|" + JSON.stringify(payload || {})); } catch (_) {}
   }
+
+  // -----------------------------
+  // Meta (videoId/listId/index/time/duration)
+  // -----------------------------
+  let lastMeta = { videoId: "", listId: "", currentIndex: -1, currentTime: NaN, duration: NaN };
+
+  function maybeEmitMeta(patch) {
+    if (!patch || !patch.videoId) return;
+
+    const merged = {
+      videoId: (patch.videoId != null ? patch.videoId : lastMeta.videoId),
+      listId: ((patch.listId != null ? patch.listId : lastMeta.listId) || ""),
+      currentIndex: (patch.currentIndex != null ? patch.currentIndex : lastMeta.currentIndex),
+      currentTime: (patch.currentTime != null ? patch.currentTime : lastMeta.currentTime),
+      duration: (patch.duration != null ? patch.duration : lastMeta.duration),
+    };
+
+    const changed =
+      merged.videoId !== lastMeta.videoId ||
+      merged.listId !== lastMeta.listId ||
+      merged.currentIndex !== lastMeta.currentIndex ||
+      (Number.isFinite(merged.duration) && merged.duration !== lastMeta.duration);
+
+    if (!changed) return;
+    lastMeta = merged;
+    emit("mediaMeta", merged);
+  }
+
+  // -----------------------------
+  // URL/hash meta extractor (#/watch?v=...&list=...&index=...)
+  // -----------------------------
+  function parseTvHashMeta() {
+    try {
+      const h = String(location.hash || "");
+      const qpos = h.indexOf("?");
+      const query = (qpos >= 0) ? h.slice(qpos + 1) : "";
+      if (!query) return null;
+
+      const sp = new URLSearchParams(query);
+      const videoId = sp.get("v") || sp.get("video_id") || sp.get("contentId") || "";
+      const listId  = sp.get("list") || sp.get("listId") || "";
+      const idxStr  = sp.get("index");
+
+      let currentIndex = -1;
+      if (idxStr != null && idxStr !== "") {
+        const n = parseInt(idxStr, 10);
+        if (!Number.isNaN(n)) currentIndex = (n > 0) ? (n - 1) : n; // best-effort
+      }
+
+      if (!videoId) return null;
+      return { videoId, listId, currentIndex };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function pollUrlMeta() {
+    const m = parseTvHashMeta();
+    if (m) maybeEmitMeta(m);
+  }
+
+  (function hookHistory() {
+    const _push = history.pushState;
+    const _rep  = history.replaceState;
+
+    history.pushState = function(...args) {
+      const r = _push.apply(this, args);
+      setTimeout(pollUrlMeta, 0);
+      return r;
+    };
+    history.replaceState = function(...args) {
+      const r = _rep.apply(this, args);
+      setTimeout(pollUrlMeta, 0);
+      return r;
+    };
+
+    window.addEventListener("hashchange", () => setTimeout(pollUrlMeta, 0), true);
+    window.addEventListener("popstate",  () => setTimeout(pollUrlMeta, 0), true);
+  })();
+
+  // -----------------------------
+  // Extract meta from lounge bind response (often NOT JSON)
+  // -----------------------------
+  function extractMetaFromText(text) {
+    text = String(text || "");
+
+    const reVid  = /["']?(?:videoId|video_id|contentId)["']?\s*[:=]\s*["']([A-Za-z0-9_-]{6,})["']/;
+    const reList = /["']?(?:listId|list_id)["']?\s*[:=]\s*["']([A-Za-z0-9_-]+)["']/;
+    const reIdx  = /["']?(?:currentIndex|current_index)["']?\s*[:=]\s*(\d+)/;
+    const reTime = /["']?(?:currentTime|current_time)["']?\s*[:=]\s*([0-9.]+)/;
+
+    const mVid = text.match(reVid);
+    if (!mVid) return;
+
+    const videoId = mVid[1];
+    const mList = text.match(reList);
+    const listId = mList ? mList[1] : "";
+
+    const mIdx = text.match(reIdx);
+    const currentIndex = mIdx ? parseInt(mIdx[1], 10) : -1;
+
+    const mTime = text.match(reTime);
+    const currentTime = mTime ? parseFloat(mTime[1]) : NaN;
+
+    maybeEmitMeta({ videoId, listId, currentIndex, currentTime });
+  }
+
+  function tryParseJson(text) { try { return JSON.parse(text); } catch (_) { return null; } }
 
   function tryParse(url, text) {
     if (!text) return;
-    try {
-      const obj = JSON.parse(text);
+    url = String(url || "");
 
-      if (obj.screenId) {
-        emit("screenId", { screenId: obj.screenId, screenIdSecret: obj.screenIdSecret || "" });
-      }
+    if (/\/api\/lounge\/bc\/bind/i.test(url)) {
+      extractMetaFromText(text);
+      return;
+    }
 
-      if (obj.screens && obj.screens.length) {
-        const s = obj.screens[0];
-        if (s && s.screenId) {
-          emit("lounge", {
-            screenId: s.screenId,
-            loungeToken: s.loungeToken || "",
-            expiration: s.expiration || 0,
-          });
-        }
+    const obj = tryParseJson(text);
+    if (!obj) return;
+
+    if (obj.screenId) {
+      emit("screenId", { screenId: obj.screenId, screenIdSecret: obj.screenIdSecret || "" });
+    }
+    if (obj.screens && obj.screens.length) {
+      const s = obj.screens[0];
+      if (s && s.screenId) {
+        emit("lounge", { screenId: s.screenId, loungeToken: s.loungeToken || "", expiration: s.expiration || 0 });
       }
-    } catch (e) {}
+    }
   }
 
+  // Hook fetch
   const _fetch = window.fetch;
   if (_fetch) {
     window.fetch = async function (...args) {
       const res = await _fetch.apply(this, args);
       try {
         const url = (args[0] && args[0].url) ? args[0].url : args[0];
-        if (match(url)) {
-          res.clone().text().then(t => tryParse(url, t));
-        }
-      } catch (e) {}
+        if (match(url)) res.clone().text().then(t => tryParse(url, t));
+      } catch (_) {}
       return res;
     };
   }
 
+  // Hook XHR
   const XHR = XMLHttpRequest.prototype;
   const _open = XHR.open;
   const _send = XHR.send;
@@ -84,16 +198,288 @@ static const char* kYtHookJs = R"JS(
   XHR.send = function (body) {
     this.addEventListener("load", function () {
       const url = this.__hh_url || "";
-      if (match(url)) {
-        tryParse(url, this.responseText);
-      }
+      if (match(url)) tryParse(url, this.responseText);
     });
     return _send.call(this, body);
   };
 
-  emit("hookReady", { ok: true });
+  // -----------------------------
+  // <video> debug: src changes + error + encrypted
+  // -----------------------------
+  (function hookMediaSrcSetter() {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "src");
+      if (desc && typeof desc.set === "function") {
+        Object.defineProperty(HTMLMediaElement.prototype, "src", {
+          get: desc.get,
+          set: function(v) {
+            try { emit("srcSet", { tag: this.tagName, src: String(v || "") }); } catch(_) {}
+            return desc.set.call(this, v);
+          },
+          configurable: true,
+          enumerable: desc.enumerable
+        });
+        emit("srcHook", { ok:true });
+      } else {
+        emit("srcHook", { ok:false, reason:"no src setter descriptor" });
+      }
+    } catch (e) {
+      emit("srcHook", { ok:false, error: String(e) });
+    }
+
+    // also catch setAttribute('src', ...)
+    try {
+      const _setAttr = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function(name, value) {
+        try {
+          if ((this.tagName === "VIDEO" || this.tagName === "AUDIO") && String(name).toLowerCase() === "src") {
+            emit("srcAttr", { tag: this.tagName, src: String(value || "") });
+          }
+        } catch(_) {}
+        return _setAttr.call(this, name, value);
+      };
+      emit("attrHook", { ok:true });
+    } catch (e) {
+      emit("attrHook", { ok:false, error:String(e) });
+    }
+  })();
+
+  // -----------------------------
+  // MSE hook: isTypeSupported + addSourceBuffer + appendBuffer (with mime mapping)
+  // -----------------------------
+  (function hookMSE() {
+    if (!window.MediaSource) {
+      emit("mse", { ok:false, reason:"MediaSource missing" });
+      return;
+    }
+
+    // 1) isTypeSupported probe (dedupe)
+    const seenITS = new Set();
+    if (typeof MediaSource.isTypeSupported === "function") {
+      const _its = MediaSource.isTypeSupported.bind(MediaSource);
+      MediaSource.isTypeSupported = function(mime) {
+        const s = String(mime || "");
+        const ok = _its(s);
+        const key = s + "|" + ok;
+        if (!seenITS.has(key)) {
+          seenITS.add(key);
+          emit("mseITS", { name:"MediaSource", mime:s, ok });
+        }
+        return ok;
+      };
+    }
+
+    // 2) addSourceBuffer hook (log real mime used by player)
+    const sbMime = new WeakMap();
+    const _add = MediaSource.prototype.addSourceBuffer;
+    if (typeof _add === "function") {
+      MediaSource.prototype.addSourceBuffer = function(mime) {
+        const s = String(mime || "");
+        emit("mseAdd", { mime:s });
+
+        try {
+          const sb = _add.call(this, mime);
+          try { sbMime.set(sb, s); } catch (_) {}
+          emit("mseAddOK", { mime:s });
+          return sb;
+        } catch (e) {
+          emit("mseAddFail", { mime:s, error: String(e && (e.name || e.message) ? (e.name + ": " + e.message) : e) });
+          throw e;
+        }
+      };
+    }
+
+    // 3) appendBuffer hook (catch runtime failures)
+    if (window.SourceBuffer && SourceBuffer.prototype && typeof SourceBuffer.prototype.appendBuffer === "function") {
+      const _append = SourceBuffer.prototype.appendBuffer;
+      SourceBuffer.prototype.appendBuffer = function(buf) {
+        try {
+          return _append.call(this, buf);
+        } catch (e) {
+          const mime = sbMime.get(this) || "";
+          emit("sbAppendFail", {
+            mime,
+            error: String(e && (e.name || e.message) ? (e.name + ": " + e.message) : e),
+          });
+          throw e;
+        }
+      };
+    }
+
+    emit("mse", { ok:true });
+  })();
+
+
+  // -----------------------------
+  // <video> playback + error polling
+  // -----------------------------
+  let hookedVideo = null;
+  let lastPlaybackTs = 0;
+  let lastErrCode = -999;
+
+  function snapshotVideo(v, reason) {
+    const now = Date.now();
+    if (now - lastPlaybackTs < 300) return;
+    lastPlaybackTs = now;
+
+    if (!v) {
+      emit("playback", { reason, ok:false, playerState:"NO_VIDEO" });
+      return;
+    }
+
+    let playerState = "IDLE";
+    let ytState = 0;
+
+    if (v.ended) { playerState = "ENDED"; ytState = 4; }
+    else if (v.seeking || (v.readyState < 3 && !v.paused)) { playerState = "BUFFERING"; ytState = 3; }
+    else if (v.paused) { playerState = "PAUSED"; ytState = 2; }
+    else { playerState = "PLAYING"; ytState = 1; }
+
+    const dur = (typeof v.duration === "number" && Number.isFinite(v.duration) && v.duration > 0) ? v.duration : NaN;
+
+    emit("playback", {
+      reason,
+      ok: true,
+      currentTime: (typeof v.currentTime === "number") ? v.currentTime : 0,
+      playbackRate: (typeof v.playbackRate === "number") ? v.playbackRate : 1,
+      ytState,
+      playerState,
+      duration: dur,
+      readyState: v.readyState,
+      networkState: v.networkState,
+      currentSrc: v.currentSrc || "",
+    });
+
+    if (Number.isFinite(dur) && lastMeta.videoId) {
+      maybeEmitMeta({ videoId: lastMeta.videoId, listId: lastMeta.listId, currentIndex: lastMeta.currentIndex, duration: dur });
+    }
+  }
+
+  function hookVideo(v) {
+    if (!v || hookedVideo === v) return;
+    hookedVideo = v;
+    lastErrCode = -999;
+
+    const events = [
+      "loadstart","loadedmetadata","durationchange","canplay","playing","pause",
+      "waiting","stalled","seeking","seeked","timeupdate","ended","ratechange"
+    ];
+    events.forEach(ev => v.addEventListener(ev, () => snapshotVideo(v, ev), { passive: true }));
+
+    v.addEventListener("error", () => {
+      const err = v.error;
+      emit("videoError", {
+        from: "event",
+        code: err ? err.code : 0,
+        message: (err && err.message) ? err.message : "",
+        currentSrc: v.currentSrc || "",
+        readyState: v.readyState,
+        networkState: v.networkState,
+      });
+    }, false);
+
+    v.addEventListener("encrypted", (e) => {
+      try {
+        emit("encrypted", {
+          initDataType: e && e.initDataType ? e.initDataType : "",
+          initDataBytes: (e && e.initData && e.initData.byteLength) ? e.initData.byteLength : 0
+        });
+      } catch(_) {}
+    }, true);
+
+    emit("videoHooked", { ok:true });
+    snapshotVideo(v, "hook");
+  }
+
+  function ensureVideoHook() {
+    const v = document.querySelector("video");
+    if (v) hookVideo(v);
+  }
+
+  // EME / Widevine probe (keep it simple)
+  async function probeWidevineOnce() {
+    if (window.__hh_wv_probed) return;
+    window.__hh_wv_probed = true;
+
+    if (!navigator.requestMediaKeySystemAccess) {
+      emit("drmProbe", { ok:false, reason:"EME API missing" });
+      return;
+    }
+
+    const cfg = [{
+      initDataTypes: ["cenc"],
+      audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"', robustness: "SW_SECURE_DECODE" }],
+      videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.42E01E"', robustness: "SW_SECURE_DECODE" }],
+    }];
+
+    try {
+      const access = await navigator.requestMediaKeySystemAccess("com.widevine.alpha", cfg);
+      emit("drmProbe", { ok:true, keySystem: access.keySystem });
+    } catch (e) {
+      emit("drmProbe", { ok:false, error: String(e && e.message ? e.message : e) });
+    }
+  }
+
+  // global error hooks
+  window.addEventListener("error", (ev) => {
+    emit("pageError", {
+      message: String(ev && ev.message ? ev.message : ""),
+      filename: String(ev && ev.filename ? ev.filename : ""),
+      lineno: ev && ev.lineno ? ev.lineno : 0,
+      colno: ev && ev.colno ? ev.colno : 0,
+    });
+  }, true);
+
+  window.addEventListener("unhandledrejection", (ev) => {
+    emit("promiseRejection", { reason: String(ev && ev.reason ? ev.reason : "") });
+  }, true);
+
+  // tick
+  setInterval(() => {
+    try {
+      ensureVideoHook();
+      pollUrlMeta();
+
+      if (hookedVideo) {
+        // error polling (sometimes event isn't fired)
+        const err = hookedVideo.error;
+        const code = err ? err.code : 0;
+        if (code && code !== lastErrCode) {
+          lastErrCode = code;
+          emit("videoError", {
+            from: "poll",
+            code,
+            message: (err && err.message) ? err.message : "",
+            currentSrc: hookedVideo.currentSrc || "",
+            readyState: hookedVideo.readyState,
+            networkState: hookedVideo.networkState,
+          });
+        }
+
+        snapshotVideo(hookedVideo, "tick");
+      }
+    } catch (_) {}
+  }, 800);
+
+  setTimeout(pollUrlMeta, 0);
+  setTimeout(() => { try { probeWidevineOnce(); } catch(_) {} }, 0);
+
+  emit("hookReady", { ok:true });
 })();
 )JS";
+
+
+namespace {
+// UI-thread cache for quick verification.
+static QString g_lastVideoId;
+static QString g_lastListId;
+static int g_lastIndex = -1;
+static QString g_lastPlayerState;
+static int g_lastYtState = -999;
+static double g_lastTime = -1.0;
+static QElapsedTimer g_playbackLogTimer;
+static bool g_playbackLogTimerStarted = false;
+}
 
 static QString nowTag()
 {
@@ -173,12 +559,24 @@ void DialWidget::ensureWebView()
     connect(page, &YtHookPage::screenIdFound, this,
             [this](const QString& screenId, const QString& secret) {
                 qInfo() << "[YT] screenId =" << screenId << "secret =" << secret;
-                // TODO: 保存到成员变量，后面给 openscreen 的 mdxSessionStatus 用
+                appendLog(QString("[%1] [YT  ] screenId=%2").arg(nowTag(), screenId));
+                Q_UNUSED(secret);
             });
 
     connect(page, &YtHookPage::loungeTokenFound, this,
             [this](const QString& screenId, const QString& token, qint64 exp) {
                 qInfo() << "[YT] lounge screenId =" << screenId << "token =" << token << "exp =" << exp;
+                appendLog(QString("[%1] [YT  ] loungeToken ok (exp=%2)").arg(nowTag()).arg(exp));
+            });
+
+    connect(page, &YtHookPage::mediaMetaFound, this,
+            [this](const QString& videoId, const QString& listId) {
+                qInfo() << "[YT] mediaMeta videoId=" << videoId << "listId=" << listId;
+            });
+
+    connect(page, &YtHookPage::playbackFound, this,
+            [this](double t, double rate, const QString& st) {
+                qInfo() << "[YT] playback t=" << t << "rate=" << rate << "state=" << st;
             });
 
     QWebEngineScript script;
@@ -188,13 +586,11 @@ void DialWidget::ensureWebView()
     script.setSourceCode(QString::fromUtf8(kYtHookJs));
     page->scripts().insert(script);
 
-    //m_view->setUrl(QUrl("about:blank"));
     m_view->setUrl(QUrl("https://www.youtube.com/tv"));
 
     QWebEngineView* dev = new QWebEngineView;
     dev->resize(1200, 800);
     dev->show();
-
     m_view->page()->setDevToolsPage(dev->page());
 }
 
@@ -203,15 +599,12 @@ void DialWidget::applySplitterRatioOnce()
     if (splitterInited_) return;
     splitterInited_ = true;
 
-    // 让拖动条更明显一点（不然暗色主题下像“没有 splitter”）
     ui->splitter->setHandleWidth(6);
     ui->splitter->setChildrenCollapsible(false);
 
-    // 这俩主要影响 resize 时分配
     ui->splitter->setStretchFactor(0, 7); // 0=videoContainer
     ui->splitter->setStretchFactor(1, 3); // 1=logContainer
 
-    // 这个才是“初始就按比例来”
     const int total = ui->splitter->height();
     if (total > 0) {
         const int top = total * 7 / 10;
@@ -224,7 +617,6 @@ void DialWidget::onStartClicked()
 {
     if (!m_server) return;
 
-    // 先 init（你 libs/dial 的 init() 已经决定：init 后不热改参数）
     if (!m_server->isInited()) {
         const bool ok = m_server->init("WQtLib DIAL");
         if (!ok) {
