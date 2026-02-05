@@ -8,7 +8,6 @@ extern "C" {
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
-#include <vector>
 
 // 你的 Extradata (AirPlay AAC-ELD 配置)
 const uint8_t g_extradata[] = { 0xF8, 0xE8, 0x50, 0x00 };
@@ -31,7 +30,13 @@ int main() {
     }
 
     // 2. 初始化 FFmpeg 原生解码器
-    const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_AAC);
+    const AVCodec* codec = avcodec_find_decoder_by_name("aac");//avcodec_find_decoder(AV_CODEC_ID_AAC);
+    if (!codec) {
+        printf("Error: Native AAC decoder ('aac') not found!\n");
+        return -1;
+    }
+
+    printf("Success: Found decoder '%s' (%s)\n", codec->name, codec->long_name);
     AVCodecContext* c = avcodec_alloc_context3(codec);
 
     // 设置 Extradata
