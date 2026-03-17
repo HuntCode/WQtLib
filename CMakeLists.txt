@@ -33,3 +33,5 @@ add_subdirectory(third_party)
 add_subdirectory(libs)
 add_subdirectory(apps/qtgui)
 add_subdirectory(apps/ffmpeg_test)
+add_subdirectory(apps/console_test)
+
