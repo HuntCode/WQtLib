@@ -7,6 +7,7 @@
 #include "Eshare57395HeartbeatClient.h"
 #include "Eshare8121CommandClient.h"
 #include "Eshare8600CameraClient.h"
+#include "Eshare51040RtspClient.h"
 
 namespace WQt::Cast::Eshare
 {
@@ -20,6 +21,8 @@ enum class EshareSessionPhase
     Starting57395,
     Running57395,
     Starting8600,
+	Starting51040,
+	Running51040,
     ReadyForNextStage,
     Stopping,
     Stopped,
@@ -36,6 +39,9 @@ public:
     void Stop();
 
     EshareSessionPhase Phase() const { return m_phase; }
+	
+	void Set51040RequestBodies(const QByteArray& videoSetupBody,
+                               const QByteArray& audioSetupBody);
 
 signals:
     void SigLog(const QString& text);
@@ -56,6 +62,10 @@ private slots:
     void On8600State(const WQt::Cast::Eshare::Eshare8600CameraResult& result);
     void On8600Ready();
     void On8600Stopped();
+	
+	void On51040SetupReady(const WQt::Cast::Eshare::Eshare51040PortInfo& info);
+    void On51040OptionsState(const WQt::Cast::Eshare::Eshare51040OptionsState& state);
+    void On51040Stopped();
 
 private:
     void SetPhase(EshareSessionPhase phase);
@@ -64,8 +74,8 @@ private:
     void Start8121GetServerInfo();
     void Start8121DongleConnected();
     void Start57395();
-
     void Start8600();
+	void Start51040();
 
 private:
     QString m_receiverIp;
@@ -75,6 +85,7 @@ private:
     Eshare57395HeartbeatClient* m_heartbeat57395 = nullptr;
     Eshare8121CommandClient* m_cmd8121 = nullptr;
     Eshare8600CameraClient* m_camera8600 = nullptr;
+	Eshare51040RtspClient* m_rtsp51040 = nullptr;
 
     QString m_clientName = "HuntCode";
     QString m_clientVersion = "EShare ES06T-DP_U_v4.1.251122";
@@ -85,6 +96,9 @@ private:
     QString m_pin;
     QString m_feature;
     QString m_deviceId;
+	
+	QByteArray m_videoSetupBody51040;
+    QByteArray m_audioSetupBody51040;
 };
 
 } // namespace WQt::Cast::Eshare

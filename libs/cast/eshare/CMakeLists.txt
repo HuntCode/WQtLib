@@ -14,11 +14,18 @@ add_executable(eshare_session_self_test
     src/Eshare57395HeartbeatClient.cpp
     src/Eshare8121CommandClient.cpp
     src/Eshare8600CameraClient.cpp
+    src/EsharePlistExtract.cpp
+    src/Eshare51040RtspClient.cpp
 )
 
 target_include_directories(eshare_session_self_test
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_definitions(eshare_session_self_test
+    PRIVATE
+        ESHARE_TESTDATA_DIR="${CMAKE_SOURCE_DIR}/res/eshare"
 )
 
 target_link_libraries(eshare_session_self_test

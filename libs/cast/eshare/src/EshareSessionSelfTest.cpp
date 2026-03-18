@@ -1,6 +1,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QMetaObject>
+#include <QFile>
 
 #include <iostream>
 #include <string>
@@ -9,6 +10,24 @@
 #include "EshareSessionClient.h"
 
 using namespace WQt::Cast::Eshare;
+
+#ifndef ESHARE_TESTDATA_DIR
+#define ESHARE_TESTDATA_DIR "."
+#endif
+
+static QByteArray LoadBinaryFile(const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+    {
+        qWarning().noquote() << "[FILE] open failed:" << path << "," << f.errorString();
+        return {};
+    }
+
+    QByteArray data = f.readAll();
+    qDebug().noquote() << "[FILE] loaded:" << path << ", size =" << data.size();
+    return data;
+}
 
 static const char* PhaseToString(EshareSessionPhase phase)
 {
@@ -21,6 +40,8 @@ static const char* PhaseToString(EshareSessionPhase phase)
     case EshareSessionPhase::Starting57395: return "Starting57395";
     case EshareSessionPhase::Running57395: return "Running57395";
     case EshareSessionPhase::Starting8600: return "Starting8600";
+    case EshareSessionPhase::Starting51040: return "Starting51040";
+    case EshareSessionPhase::Running51040: return "Running51040";
     case EshareSessionPhase::ReadyForNextStage: return "ReadyForNextStage";
     case EshareSessionPhase::Stopping: return "Stopping";
     case EshareSessionPhase::Stopped: return "Stopped";
@@ -47,7 +68,7 @@ int main(int argc, char *argv[])
 
     QObject::connect(session, &EshareSessionClient::SigReadyForNextStep,
                      []() {
-                         qDebug() << "[SESSION] 8700 + 8121 + 57395 + 8600 are ready, next step can integrate 51040.";
+                         qDebug() << "[SESSION] 8700 + 8121 + 57395 + 8600 (+ maybe 51040) are ready.";
                      });
 
     QObject::connect(session, &EshareSessionClient::SigError,
@@ -62,12 +83,18 @@ int main(int argc, char *argv[])
                          app.quit();
                      });
 
+    // 这里就是新增的部分：读取 51040 的两个 request body 模板
+    const QString baseDir = QStringLiteral(ESHARE_TESTDATA_DIR);
+    const QByteArray videoBody = LoadBinaryFile(baseDir + "/51040_video_setup_body.bin");
+    const QByteArray audioBody = LoadBinaryFile(baseDir + "/51040_audio_setup_body.bin");
+
+    session->Set51040RequestBodies(videoBody, audioBody);
+
     session->Start("192.168.9.141");
 
     qDebug().noquote() << "";
     qDebug().noquote() << "[INPUT] Type 'q' and press Enter to stop.";
 
-    // 后台线程阻塞等待控制台输入
     std::thread inputThread([session]() {
         std::string line;
         while (std::getline(std::cin, line))

@@ -10,6 +10,7 @@ EshareSessionClient::EshareSessionClient(QObject* parent)
     m_heartbeat57395 = new Eshare57395HeartbeatClient(this);
     m_cmd8121 = new Eshare8121CommandClient(this);
     m_camera8600 = new Eshare8600CameraClient(this);
+    m_rtsp51040 = new Eshare51040RtspClient(this);
 
     connect(m_probe8700, &Eshare8700ProbeClient::SigLog,
             this, &EshareSessionClient::SigLog);
@@ -44,6 +45,20 @@ EshareSessionClient::EshareSessionClient(QObject* parent)
             this, [this](const QString& text) {
                 SetPhase(EshareSessionPhase::Error);
                 emit SigError(QString("[SESSION] 8600 failed: %1").arg(text));
+            });
+
+    connect(m_rtsp51040, &Eshare51040RtspClient::SigLog,
+            this, &EshareSessionClient::SigLog);
+    connect(m_rtsp51040, &Eshare51040RtspClient::SigSetupReady,
+            this, &EshareSessionClient::On51040SetupReady);
+    connect(m_rtsp51040, &Eshare51040RtspClient::SigOptionsState,
+            this, &EshareSessionClient::On51040OptionsState);
+    connect(m_rtsp51040, &Eshare51040RtspClient::SigStopped,
+            this, &EshareSessionClient::On51040Stopped);
+    connect(m_rtsp51040, &Eshare51040RtspClient::SigError,
+            this, [this](const QString& text) {
+                SetPhase(EshareSessionPhase::Error);
+                emit SigError(QString("[SESSION] 51040 failed: %1").arg(text));
             });
 }
 
@@ -80,6 +95,14 @@ void EshareSessionClient::Stop()
     m_cmd8121->Abort();
     m_heartbeat57395->Stop();
     m_camera8600->Stop();
+    m_rtsp51040->Stop();
+}
+
+void EshareSessionClient::Set51040RequestBodies(const QByteArray& videoSetupBody,
+                                                const QByteArray& audioSetupBody)
+{
+    m_videoSetupBody51040 = videoSetupBody;
+    m_audioSetupBody51040 = audioSetupBody;
 }
 
 void EshareSessionClient::On8700Finished(const Eshare8700ProbeResult& result)
@@ -134,6 +157,25 @@ void EshareSessionClient::Start8600()
     SetPhase(EshareSessionPhase::Starting8600);
     EmitLog("[SESSION] Start 8600 camera checks.");
     m_camera8600->Start(m_receiverIp, 8600);
+}
+
+void EshareSessionClient::Start51040()
+{
+    if (m_videoSetupBody51040.isEmpty() || m_audioSetupBody51040.isEmpty())
+    {
+        EmitLog("[SESSION] 51040 request bodies are empty, skip 51040 for now.");
+        SetPhase(EshareSessionPhase::ReadyForNextStage);
+        emit SigReadyForNextStep();
+        return;
+    }
+
+    SetPhase(EshareSessionPhase::Starting51040);
+    EmitLog("[SESSION] Start 51040 RTSP-like control channel.");
+
+    m_rtsp51040->Start(m_receiverIp, 51040,
+                       m_videoSetupBody51040,
+                       m_audioSetupBody51040,
+                       1000);
 }
 
 void EshareSessionClient::On8121Finished(const Eshare8121CommandResult& result)
@@ -258,13 +300,52 @@ void EshareSessionClient::On8600State(const Eshare8600CameraResult& result)
 void EshareSessionClient::On8600Ready()
 {
     EmitLog("[SESSION] 8600 camera checks completed.");
-    SetPhase(EshareSessionPhase::ReadyForNextStage);
-    emit SigReadyForNextStep();
+    Start51040();
 }
 
 void EshareSessionClient::On8600Stopped()
 {
     EmitLog("[SESSION] 8600 stopped.");
+}
+
+void EshareSessionClient::On51040SetupReady(const Eshare51040PortInfo& info)
+{
+    SetPhase(EshareSessionPhase::Running51040);
+
+    EmitLog(QString("[SESSION] 51040 setup ready: videoDataPort=%1, audioDataPort=%2, mousePort=%3, controlPort=%4, width=%5, height=%6, framerate=%7, format=%8")
+                .arg(info.videoDataPort)
+                .arg(info.audioDataPort)
+                .arg(info.mousePort)
+                .arg(info.controlPort)
+                .arg(info.castingWidth)
+                .arg(info.castingHeight)
+                .arg(info.framerate)
+                .arg(info.videoFormat));
+}
+
+void EshareSessionClient::On51040OptionsState(const Eshare51040OptionsState& state)
+{
+    if (!state.success)
+    {
+        SetPhase(EshareSessionPhase::Error);
+        emit SigError("[SESSION] 51040 options state failed.");
+        return;
+    }
+
+    EmitLog(QString("[SESSION] 51040 options: cseq=%1 Video-Audio=%2 width=%3 height=%4 framerate=%5 idr_req=%6 bitrate=%7 i-interval=%8")
+                .arg(state.cseq)
+                .arg(state.videoAudioHeader)
+                .arg(state.castingWidth)
+                .arg(state.castingHeight)
+                .arg(state.framerate)
+                .arg(state.idrReq)
+                .arg(state.bitrate)
+                .arg(state.iInterval));
+}
+
+void EshareSessionClient::On51040Stopped()
+{
+    EmitLog("[SESSION] 51040 stopped.");
 }
 
 void EshareSessionClient::SetPhase(EshareSessionPhase phase)
