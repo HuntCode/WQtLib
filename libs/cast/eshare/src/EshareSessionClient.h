@@ -8,6 +8,7 @@
 #include "Eshare8121CommandClient.h"
 #include "Eshare8600CameraClient.h"
 #include "Eshare51040RtspClient.h"
+#include "EshareH264FileMirrorSender.h"
 
 namespace WQt::Cast::Eshare
 {
@@ -42,6 +43,7 @@ public:
 	
 	void Set51040RequestBodies(const QByteArray& videoSetupBody,
                                const QByteArray& audioSetupBody);
+    void SetTestH264FilePath(const QString& path);
 
 signals:
     void SigLog(const QString& text);
@@ -67,6 +69,8 @@ private slots:
     void On51040OptionsState(const WQt::Cast::Eshare::Eshare51040OptionsState& state);
     void On51040Stopped();
 
+    void OnH264FileSenderStopped();
+
 private:
     void SetPhase(EshareSessionPhase phase);
     void EmitLog(const QString& text);
@@ -86,6 +90,7 @@ private:
     Eshare8121CommandClient* m_cmd8121 = nullptr;
     Eshare8600CameraClient* m_camera8600 = nullptr;
 	Eshare51040RtspClient* m_rtsp51040 = nullptr;
+    EshareH264FileMirrorSender* m_h264FileSender = nullptr;
 
     QString m_clientName = "HuntCode";
     QString m_clientVersion = "EShare ES06T-DP_U_v4.1.251122";
@@ -99,6 +104,7 @@ private:
 	
 	QByteArray m_videoSetupBody51040;
     QByteArray m_audioSetupBody51040;
+    QString m_testH264FilePath;
 };
 
 } // namespace WQt::Cast::Eshare

@@ -119,6 +119,7 @@ int main(int argc, char *argv[])
     DumpLoadedPlist("51040_audio_setup_body.bin", audioBody);
 
     session->Set51040RequestBodies(videoBody, audioBody);
+    session->SetTestH264FilePath(baseDir + "/BigBuckBunny.h264");
 
     session->Start("192.168.9.141");
 

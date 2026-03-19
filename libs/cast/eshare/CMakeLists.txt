@@ -16,6 +16,9 @@ add_executable(eshare_session_self_test
     src/Eshare8600CameraClient.cpp
     src/EsharePlistExtract.cpp
     src/Eshare51040RtspClient.cpp
+    src/EshareVideoPacketizer.cpp
+    src/EshareH264AnnexB.cpp
+    src/EshareH264FileMirrorSender.cpp
 )
 
 target_include_directories(eshare_session_self_test

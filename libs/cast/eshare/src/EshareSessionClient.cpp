@@ -11,6 +11,7 @@ EshareSessionClient::EshareSessionClient(QObject* parent)
     m_cmd8121 = new Eshare8121CommandClient(this);
     m_camera8600 = new Eshare8600CameraClient(this);
     m_rtsp51040 = new Eshare51040RtspClient(this);
+    m_h264FileSender = new EshareH264FileMirrorSender(this);
 
     connect(m_probe8700, &Eshare8700ProbeClient::SigLog,
             this, &EshareSessionClient::SigLog);
@@ -60,6 +61,18 @@ EshareSessionClient::EshareSessionClient(QObject* parent)
                 SetPhase(EshareSessionPhase::Error);
                 emit SigError(QString("[SESSION] 51040 failed: %1").arg(text));
             });
+
+    connect(m_h264FileSender, &EshareH264FileMirrorSender::SigLog,
+            this, &EshareSessionClient::SigLog);
+
+    connect(m_h264FileSender, &EshareH264FileMirrorSender::SigError,
+            this, [this](const QString& text) {
+                SetPhase(EshareSessionPhase::Error);
+                emit SigError(QString("[SESSION] H264 file sender failed: %1").arg(text));
+            });
+
+    connect(m_h264FileSender, &EshareH264FileMirrorSender::SigStopped,
+            this, &EshareSessionClient::OnH264FileSenderStopped);
 }
 
 void EshareSessionClient::Start(const QString& receiverIp)
@@ -96,6 +109,7 @@ void EshareSessionClient::Stop()
     m_heartbeat57395->Stop();
     m_camera8600->Stop();
     m_rtsp51040->Stop();
+    m_h264FileSender->Stop();
 }
 
 void EshareSessionClient::Set51040RequestBodies(const QByteArray& videoSetupBody,
@@ -103,6 +117,11 @@ void EshareSessionClient::Set51040RequestBodies(const QByteArray& videoSetupBody
 {
     m_videoSetupBody51040 = videoSetupBody;
     m_audioSetupBody51040 = audioSetupBody;
+}
+
+void EshareSessionClient::SetTestH264FilePath(const QString& path)
+{
+    m_testH264FilePath = path;
 }
 
 void EshareSessionClient::On8700Finished(const Eshare8700ProbeResult& result)
@@ -321,6 +340,19 @@ void EshareSessionClient::On51040SetupReady(const Eshare51040PortInfo& info)
                 .arg(info.castingHeight)
                 .arg(info.framerate)
                 .arg(info.videoFormat));
+
+    if (!m_testH264FilePath.isEmpty() && info.videoDataPort > 0)
+    {
+        EmitLog(QString("[SESSION] Start H264 file sender: port=%1, file=%2")
+                    .arg(info.videoDataPort)
+                    .arg(m_testH264FilePath));
+
+        m_h264FileSender->Start(m_receiverIp,
+                                static_cast<quint16>(info.videoDataPort),
+                                m_testH264FilePath,
+                                30,
+                                true);
+    }
 }
 
 void EshareSessionClient::On51040OptionsState(const Eshare51040OptionsState& state)
@@ -346,6 +378,11 @@ void EshareSessionClient::On51040OptionsState(const Eshare51040OptionsState& sta
 void EshareSessionClient::On51040Stopped()
 {
     EmitLog("[SESSION] 51040 stopped.");
+}
+
+void EshareSessionClient::OnH264FileSenderStopped()
+{
+    EmitLog("[SESSION] H264 file sender stopped.");
 }
 
 void EshareSessionClient::SetPhase(EshareSessionPhase phase)
