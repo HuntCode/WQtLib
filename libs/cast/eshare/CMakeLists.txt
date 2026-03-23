@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(EshareSourceSelfTest LANGUAGES C CXX)
+project(EshareSelfTests LANGUAGES C CXX)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Network)
 find_package(unofficial-libplist CONFIG REQUIRED)
@@ -58,4 +58,53 @@ target_compile_definitions(eshare_source_self_test
 target_link_libraries(eshare_source_self_test
     PRIVATE
         wqt_eshare_source
+)
+
+add_library(wqt_eshare_sink STATIC
+    protocol/EshareRtspLiteMessage.cpp
+    parser/EshareJsonLineCodec.cpp
+
+    sink/common/EsharePassivePortListener.cpp
+    sink/session/EshareSinkSession.cpp
+
+    sink/control/Eshare8700ProbeServer.cpp
+    sink/control/Eshare8121CommandServer.cpp
+    sink/control/Eshare57395HeartbeatServer.cpp
+    sink/control/Eshare8600CameraServer.cpp
+    sink/control/Eshare51040RtspServer.cpp
+
+    sink/media/EshareVideoReceiver.cpp
+    sink/media/EshareVideoDepacketizer.cpp
+)
+
+target_include_directories(wqt_eshare_sink
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/protocol
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser
+        ${CMAKE_CURRENT_SOURCE_DIR}/sink/session
+        ${CMAKE_CURRENT_SOURCE_DIR}/sink/control
+        ${CMAKE_CURRENT_SOURCE_DIR}/sink/media
+        ${CMAKE_CURRENT_SOURCE_DIR}/sink/common
+)
+
+target_link_libraries(wqt_eshare_sink
+    PUBLIC
+        Qt6::Core
+        Qt6::Network
+        unofficial::libplist::libplist
+)
+
+add_executable(eshare_sink_self_test
+    self_test/eshare_sink_self_test/EshareSinkSelfTest.cpp
+)
+
+target_include_directories(eshare_sink_self_test
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/self_test/eshare_sink_self_test
+)
+
+target_link_libraries(eshare_sink_self_test
+    PRIVATE
+        wqt_eshare_sink
 )
