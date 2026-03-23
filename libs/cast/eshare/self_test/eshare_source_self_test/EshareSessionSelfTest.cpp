@@ -121,7 +121,7 @@ int main(int argc, char *argv[])
     session->Set51040RequestBodies(videoBody, audioBody);
     session->SetTestH264FilePath(baseDir + "/BigBuckBunny.h264");
 
-    session->Start("192.168.9.141");
+    session->Start("192.168.9.64");
 
     qDebug().noquote() << "";
     qDebug().noquote() << "[INPUT] Type 'q' and press Enter to stop.";
