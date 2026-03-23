@@ -1,13 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(EshareSourceSelfTest  LANGUAGES C CXX)
+project(EshareSourceSelfTest LANGUAGES C CXX)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Network)
 find_package(unofficial-libplist CONFIG REQUIRED)
 
-add_executable(eshare_source_self_test
-    self_test/eshare_source_self_test/EshareSessionSelfTest.cpp
-
+add_library(wqt_eshare_source STATIC
     source/session/EshareSessionClient.cpp
 
     source/control/Eshare8700ProbeClient.cpp
@@ -26,13 +24,29 @@ add_executable(eshare_source_self_test
     source/media/EshareH264FileMirrorSender.cpp
 )
 
-target_include_directories(eshare_source_self_test
-    PRIVATE
+target_include_directories(wqt_eshare_source
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/common
         ${CMAKE_CURRENT_SOURCE_DIR}/protocol
         ${CMAKE_CURRENT_SOURCE_DIR}/parser
         ${CMAKE_CURRENT_SOURCE_DIR}/source/session
         ${CMAKE_CURRENT_SOURCE_DIR}/source/control
         ${CMAKE_CURRENT_SOURCE_DIR}/source/media
+)
+
+target_link_libraries(wqt_eshare_source
+    PUBLIC
+        Qt6::Core
+        Qt6::Network
+        unofficial::libplist::libplist
+)
+
+add_executable(eshare_source_self_test
+    self_test/eshare_source_self_test/EshareSessionSelfTest.cpp
+)
+
+target_include_directories(eshare_source_self_test
+    PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/self_test/eshare_source_self_test
 )
 
@@ -43,7 +57,5 @@ target_compile_definitions(eshare_source_self_test
 
 target_link_libraries(eshare_source_self_test
     PRIVATE
-        Qt6::Core
-        Qt6::Network
-        unofficial::libplist::libplist
+        wqt_eshare_source
 )
