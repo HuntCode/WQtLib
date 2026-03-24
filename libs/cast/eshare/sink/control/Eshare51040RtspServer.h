@@ -46,8 +46,8 @@ private:
     // M5 固定策略：视频端口先锁到 51030，其他先给占位端口
     int m_videoDataPort = 51030;
     int m_audioDataPort = 38643;
-    int m_mousePort = 38407;
-    int m_controlPort = 51050;
+    int m_controlPort = 38407;
+    int m_mousePort = 51050;
 
     int m_framerate = 30;
     int m_castingWidth = 3840;
