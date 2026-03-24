@@ -14,7 +14,8 @@ const uint8_t g_extradata[] = { 0xF8, 0xE8, 0x50, 0x00 };
 
 int main() {
     // 1. 打开 Dump 文件
-    const char* input_filename = "airplay_dump.bin"; // 确保这个文件在运行目录下
+    // char* input_filename = "airplay_dump.bin"; // 确保这个文件在运行目录下
+    const char* input_filename = "audio_payload_len_dump.bin"; // 确保这个文件在运行目录下
     FILE* in_file = fopen(input_filename, "rb");
     if (!in_file) {
         printf("Error: Cannot open input file %s\n", input_filename);
