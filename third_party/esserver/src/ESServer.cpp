@@ -334,7 +334,6 @@ std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& pe
 
         const std::string text = Trim(request);
 
-        // client info
         if (text.find("\"clientName\"") != std::string::npos &&
             text.find("\"clientType\"") != std::string::npos) {
             std::string clientName;
@@ -376,7 +375,6 @@ std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& pe
             return response;
         }
 
-        // heartbeat
         if (text.find("\"heartbeat\"") != std::string::npos) {
             auto session = GetSession(streamId);
             if (!session) {
@@ -411,6 +409,27 @@ std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& pe
         }
 
         std::cout << "[ESServer][TCP][57395] unsupported request" << std::endl;
+        return "";
+    }
+
+    if (localPort == 8600) {
+        const std::string text = Trim(request);
+
+        if (text == "CameraAvailabilityCheck") {
+            std::string response = "0";
+            std::cout << "[ESServer][TCP][8600] response to " << peerIp << ":\n"
+                      << response << std::endl;
+            return response;
+        }
+
+        if (text == "CameraStateCheck") {
+            std::string response = "{\"replayStateCheck\":\"N\",\"currentID\":0,\"count\":0}";
+            std::cout << "[ESServer][TCP][8600] response to " << peerIp << ":\n"
+                      << response << std::endl;
+            return response;
+        }
+
+        std::cout << "[ESServer][TCP][8600] unsupported request: " << text << std::endl;
         return "";
     }
 
