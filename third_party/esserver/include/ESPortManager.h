@@ -25,6 +25,7 @@ public:
 
     bool IsRunning() const;
 
+    uint16_t GetVideoPort() const;
     uint16_t GetMousePort() const;
     uint16_t GetDataPort() const;
     uint16_t GetControlPort() const;
@@ -50,21 +51,28 @@ private:
     ESServer* m_server = nullptr;
     std::atomic<bool> m_running{ false };
 
+    uint16_t m_videoPort = 51030;
+    uint16_t m_mousePort = 51050;
+    uint16_t m_dataPort = 0;
+    uint16_t m_controlPort = 0;
+
     std::unique_ptr<hv::TcpServer> m_tcpServer8700;
     std::unique_ptr<hv::TcpServer> m_tcpServer8121;
     std::unique_ptr<hv::TcpServer> m_tcpServer57395;
     std::unique_ptr<hv::TcpServer> m_tcpServer8600;
     std::unique_ptr<hv::TcpServer> m_tcpServer51030;
+    std::unique_ptr<hv::TcpServer> m_tcpServer51040;
+
+    std::unique_ptr<hv::TcpServer> m_tcpServer52020;
+    std::unique_ptr<hv::TcpServer> m_tcpServer52025;
+    std::unique_ptr<hv::TcpServer> m_tcpServer52030;
 
     std::unique_ptr<hv::UdpServer> m_udpServer51050;
     std::unique_ptr<hv::UdpServer> m_udpServerDataPort;
     std::unique_ptr<hv::UdpServer> m_udpServerControlPort;
 
-    uint16_t m_mousePort = 51050;
-    uint16_t m_dataPort = 0;
-    uint16_t m_controlPort = 0;
-
     std::unordered_map<std::string, std::string> m_tcpRecvBuffers8600;
+    std::unordered_map<std::string, std::string> m_tcpRecvBuffers51040;
 };
 
 } // namespace hhcast

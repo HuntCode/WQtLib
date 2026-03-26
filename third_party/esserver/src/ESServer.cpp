@@ -1,6 +1,8 @@
 #include "ESServer.h"
 #include "ESPortManager.h"
 #include "ESSession.h"
+#include "ESRtspLite.h"
+#include <plist/plist.h>
 
 #include <cctype>
 #include <iostream>
@@ -180,6 +182,146 @@ static bool GetJsonIntValue(const std::string& json, const std::string& key, int
 
     value = std::stoi(json.substr(pos, end - pos));
     return true;
+}
+
+static bool IsBinaryPlistBody(const std::string& body)
+{
+    return body.size() >= 8 && body.compare(0, 8, "bplist00") == 0;
+}
+
+static void PrintPlistXml(plist_t root, const std::string& tag)
+{
+    if (root == nullptr) {
+        return;
+    }
+
+    char* xml = nullptr;
+    uint32_t len = 0;
+    plist_to_xml(root, &xml, &len);
+
+    if (xml && len > 0) {
+        std::cout << tag << "\n"
+                  << std::string(xml, len) << std::endl;
+    }
+
+    if (xml) {
+        plist_mem_free(xml);
+    }
+}
+
+static void TryPrintBinaryPlistXml(const std::string& bin, const std::string& tag)
+{
+    if (bin.empty()) {
+        return;
+    }
+
+    plist_t root = nullptr;
+    plist_from_bin(bin.data(), static_cast<uint32_t>(bin.size()), &root);
+    if (root == nullptr) {
+        std::cout << tag << "\n<invalid binary plist>" << std::endl;
+        return;
+    }
+
+    PrintPlistXml(root, tag);
+    plist_free(root);
+}
+
+static std::string GetVideoAudioByCSeq(const std::string& cseq)
+{
+    if (cseq == "0" || cseq == "1") return "0-0";
+    if (cseq == "2") return "48-0";
+    if (cseq == "3") return "78-0";
+    if (cseq == "4") return "108-0";
+    return "0-0";
+}
+
+static std::string BuildVideoSetupPlist(uint16_t videoPort,
+                                        int framerate,
+                                        int width,
+                                        int height,
+                                        const std::string& feature,
+                                        const std::string& format)
+{
+    plist_t root = plist_new_dict();
+
+    plist_t streams = plist_new_array();
+    plist_t streamItem = plist_new_dict();
+    plist_dict_set_item(streamItem, "type", plist_new_uint(static_cast<uint64_t>(110)));
+    plist_dict_set_item(streamItem, "dataPort", plist_new_uint(static_cast<uint64_t>(videoPort)));
+    plist_array_append_item(streams, streamItem);
+    plist_dict_set_item(root, "streams", streams);
+
+    plist_dict_set_item(root, "feature", plist_new_string(feature.c_str()));
+    plist_dict_set_item(root, "Framerate", plist_new_string(std::to_string(framerate).c_str()));
+    plist_dict_set_item(root, "casting_win_width", plist_new_string(std::to_string(width).c_str()));
+    plist_dict_set_item(root, "casting_win_height", plist_new_string(std::to_string(height).c_str()));
+    plist_dict_set_item(root, "format", plist_new_string(format.c_str()));
+
+    PrintPlistXml(root, "[ESServer][TCP][51040] video setup plist xml:");
+
+    char* bin = nullptr;
+    uint32_t len = 0;
+    plist_to_bin(root, &bin, &len);
+
+    std::string out;
+    if (bin && len > 0) {
+        out.assign(bin, bin + len);
+    }
+
+    if (bin) {
+        plist_mem_free(bin);
+    }
+    plist_free(root);
+    return out;
+}
+
+static std::string BuildAudioSetupPlist(uint16_t dataPort,
+                                        uint16_t controlPort,
+                                        uint16_t mousePort)
+{
+    plist_t root = plist_new_dict();
+
+    plist_t streams = plist_new_array();
+    plist_t streamItem = plist_new_dict();
+    plist_dict_set_item(streamItem, "type", plist_new_uint(static_cast<uint64_t>(96)));
+    plist_dict_set_item(streamItem, "dataPort", plist_new_uint(static_cast<uint64_t>(dataPort)));
+    plist_dict_set_item(streamItem, "controlPort", plist_new_uint(static_cast<uint64_t>(controlPort)));
+    plist_dict_set_item(streamItem, "mousePort", plist_new_uint(static_cast<uint64_t>(mousePort)));
+    plist_array_append_item(streams, streamItem);
+    plist_dict_set_item(root, "streams", streams);
+
+    PrintPlistXml(root, "[ESServer][TCP][51040] audio setup plist xml:");
+
+    char* bin = nullptr;
+    uint32_t len = 0;
+    plist_to_bin(root, &bin, &len);
+
+    std::string out;
+    if (bin && len > 0) {
+        out.assign(bin, bin + len);
+    }
+
+    if (bin) {
+        plist_mem_free(bin);
+    }
+    plist_free(root);
+    return out;
+}
+
+static std::string BuildOptionsJson(int framerate, int width, int height)
+{
+    std::ostringstream oss;
+    oss << "{"
+        << "\"Framerate\":\"" << framerate << "\","
+        << "\"casting_win_width\":\"" << width << "\","
+        << "\"casting_win_height\":\"" << height << "\","
+        << "\"idr_req\":\"1\","
+        << "\"bitrate\":\"8000000\","
+        << "\"i-interval\":\"60\","
+        << "\"Castnum\":\"1\","
+        << "\"exclusive_screen\":\"0\""
+        << "}";
+    return oss.str();
 }
 
 } // namespace
@@ -404,7 +546,7 @@ std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& pe
                 << "\"castMode\":1,"
                 << "\"replyHeartbeat\":" << heartbeat << ","
                 << "\"mirrorMode\":1,"
-                << "\"castState\":0"
+                << "\"castState\":1"
                 << "}";
 
             std::string response = oss.str();
@@ -437,6 +579,100 @@ std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& pe
         }
 
         std::cout << "[ESServer][TCP][8600] unsupported request: " << text << std::endl;
+        return "";
+    }
+
+    if (localPort == 51040) {
+        ESRtspLiteMessage req;
+        std::string error;
+        if (!ESRtspLiteCodec::DecodeSingle(request, req, &error)) {
+            std::cout << "[ESServer][TCP][51040] decode failed: " << error << std::endl;
+            return "";
+        }
+
+        if (IsBinaryPlistBody(req.body)) {
+            TryPrintBinaryPlistXml(req.body, "[ESServer][TCP][51040] recv plist xml:");
+        }
+
+        ESRtspLiteMessage resp;
+        const std::string cseq = req.HeaderValue("CSeq");
+
+        const bool isSetup =
+            req.startLine.rfind("SETUP ", 0) == 0 ||
+            req.startLine.rfind("setup ", 0) == 0;
+        const bool isOptions =
+            req.startLine.rfind("OPTIONS ", 0) == 0 ||
+            req.startLine.rfind("options ", 0) == 0;
+        const bool isTeardown =
+            req.startLine.rfind("TEARDOWN ", 0) == 0 ||
+            req.startLine.rfind("teardown ", 0) == 0;
+
+        if (isSetup) {
+            const bool isVideoSetup =
+                (cseq == "0") || !req.HeaderValue("VideoAspectRatio").empty();
+
+            resp.startLine = "RTSP/1.0 200 OK";
+            if (!cseq.empty()) {
+                resp.SetHeader("CSeq", cseq);
+            }
+            resp.SetHeader("Content-Type", "null");
+
+            if (isVideoSetup) {
+                resp.body = BuildVideoSetupPlist(
+                    m_portManager->GetVideoPort(),
+                    30,
+                    3840,
+                    2160,
+                    "1",
+                    "video:h264");
+            } else {
+                resp.body = BuildAudioSetupPlist(
+                    m_portManager->GetDataPort(),
+                    m_portManager->GetControlPort(),
+                    m_portManager->GetMousePort());
+            }
+
+            std::string response = ESRtspLiteCodec::Encode(resp);
+            std::cout << "[ESServer][TCP][51040] response to " << peerIp
+                      << " (" << (isVideoSetup ? "video setup" : "audio setup") << ")\n";
+            return response;
+        }
+
+        if (isOptions) {
+            resp.startLine = "RTSP/1.0 200 OK";
+            if (!cseq.empty()) {
+                resp.SetHeader("CSeq", cseq);
+            }
+            resp.SetHeader("Video-Audio", GetVideoAudioByCSeq(cseq));
+            resp.body =
+                "{\"Framerate\":\"30\","
+                "\"idr_req\":\"0\","
+                "\"casting_win_height\":\"2160\","
+                "\"feature\":\"1\","
+                "\"Castnum\":\"1\","
+                "\"casting_win_width\":\"3840\","
+                "\"exclusive_screen\":\"0\","
+                "\"bitrate\":\"0\","
+                "\"i-interval\":\"0\"}";
+
+            std::string response = ESRtspLiteCodec::Encode(resp);
+            std::cout << "[ESServer][TCP][51040] options response to " << peerIp << std::endl;
+            return response;
+        }
+
+        if (isTeardown) {
+            resp.startLine = "RTSP/1.0 200 OK";
+            if (!cseq.empty()) {
+                resp.SetHeader("CSeq", cseq);
+            }
+            resp.body.clear();
+
+            std::string response = ESRtspLiteCodec::Encode(resp);
+            std::cout << "[ESServer][TCP][51040] teardown response to " << peerIp << std::endl;
+            return response;
+        }
+
+        std::cout << "[ESServer][TCP][51040] unsupported request:\n" << request << std::endl;
         return "";
     }
 

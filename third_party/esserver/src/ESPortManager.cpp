@@ -1,8 +1,10 @@
 #include "ESPortManager.h"
 
+#include "ESRtspLite.h"
 #include "ESServer.h"
 
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <string>
 
@@ -70,9 +72,7 @@ int ESPortManager::Start()
     }
 
     int ret = StartTcpServer(8700, m_tcpServer8700);
-    if (ret != 0) {
-        return ret;
-    }
+    if (ret != 0) return ret;
 
     ret = StartTcpServer(8121, m_tcpServer8121);
     if (ret != 0) {
@@ -95,12 +95,58 @@ int ESPortManager::Start()
         return ret;
     }
 
-    ret = StartTcpServer(51030, m_tcpServer51030);
+    ret = StartTcpServer(m_videoPort, m_tcpServer51030);
     if (ret != 0) {
         StopTcpServer(m_tcpServer8700);
         StopTcpServer(m_tcpServer8121);
         StopTcpServer(m_tcpServer57395);
         StopTcpServer(m_tcpServer8600);
+        return ret;
+    }
+
+    ret = StartTcpServer(51040, m_tcpServer51040);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        StopTcpServer(m_tcpServer51030);
+        return ret;
+    }
+
+    ret = StartTcpServer(52020, m_tcpServer52020);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        StopTcpServer(m_tcpServer51030);
+        StopTcpServer(m_tcpServer51040);
+        return ret;
+    }
+
+    ret = StartTcpServer(52025, m_tcpServer52025);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        StopTcpServer(m_tcpServer51030);
+        StopTcpServer(m_tcpServer51040);
+        StopTcpServer(m_tcpServer52020);
+        return ret;
+    }
+
+    ret = StartTcpServer(52030, m_tcpServer52030);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        StopTcpServer(m_tcpServer51030);
+        StopTcpServer(m_tcpServer51040);
+        StopTcpServer(m_tcpServer52020);
+        StopTcpServer(m_tcpServer52025);
         return ret;
     }
 
@@ -111,6 +157,10 @@ int ESPortManager::Start()
         StopTcpServer(m_tcpServer57395);
         StopTcpServer(m_tcpServer8600);
         StopTcpServer(m_tcpServer51030);
+        StopTcpServer(m_tcpServer51040);
+        StopTcpServer(m_tcpServer52020);
+        StopTcpServer(m_tcpServer52025);
+        StopTcpServer(m_tcpServer52030);
         return ret;
     }
 
@@ -121,6 +171,10 @@ int ESPortManager::Start()
         StopTcpServer(m_tcpServer57395);
         StopTcpServer(m_tcpServer8600);
         StopTcpServer(m_tcpServer51030);
+        StopTcpServer(m_tcpServer51040);
+        StopTcpServer(m_tcpServer52020);
+        StopTcpServer(m_tcpServer52025);
+        StopTcpServer(m_tcpServer52030);
         StopUdpServer(m_udpServer51050);
         return ret;
     }
@@ -132,6 +186,10 @@ int ESPortManager::Start()
         StopTcpServer(m_tcpServer57395);
         StopTcpServer(m_tcpServer8600);
         StopTcpServer(m_tcpServer51030);
+        StopTcpServer(m_tcpServer51040);
+        StopTcpServer(m_tcpServer52020);
+        StopTcpServer(m_tcpServer52025);
+        StopTcpServer(m_tcpServer52030);
         StopUdpServer(m_udpServer51050);
         StopUdpServer(m_udpServerDataPort);
         return ret;
@@ -157,6 +215,10 @@ int ESPortManager::Stop()
     StopTcpServer(m_tcpServer57395);
     StopTcpServer(m_tcpServer8600);
     StopTcpServer(m_tcpServer51030);
+    StopTcpServer(m_tcpServer51040);
+    StopTcpServer(m_tcpServer52020);
+    StopTcpServer(m_tcpServer52025);
+    StopTcpServer(m_tcpServer52030);
 
     StopUdpServer(m_udpServer51050);
     StopUdpServer(m_udpServerDataPort);
@@ -167,6 +229,7 @@ int ESPortManager::Stop()
     m_controlPort = 0;
 
     m_tcpRecvBuffers8600.clear();
+    m_tcpRecvBuffers51040.clear();
 
     m_running = false;
     std::cout << "[ESPortManager] stopped" << std::endl;
@@ -182,6 +245,11 @@ void ESPortManager::SetServer(ESServer* server)
 bool ESPortManager::IsRunning() const
 {
     return m_running.load();
+}
+
+uint16_t ESPortManager::GetVideoPort() const
+{
+    return m_videoPort;
 }
 
 uint16_t ESPortManager::GetMousePort() const
@@ -221,6 +289,9 @@ int ESPortManager::StartTcpServer(uint16_t localPort, std::unique_ptr<hv::TcpSer
         } else {
             if (localPort == 8600) {
                 m_tcpRecvBuffers8600.erase(peerAddr);
+            }
+            if (localPort == 51040) {
+                m_tcpRecvBuffers51040.erase(peerAddr);
             }
 
             if (m_server) {
@@ -298,9 +369,29 @@ void ESPortManager::HandleTcpMessage(uint16_t localPort,
     std::string peerIp = ExtractPeerIp(peerAddr);
     std::string chunk(reinterpret_cast<const char*>(buf->data()), buf->size());
 
-    if (localPort == 51030) {
-        std::cout << "[ESPortManager][TCP][51030] recv " << buf->size()
+    if (localPort == 51030 || localPort == 52020 || localPort == 52025 || localPort == 52030) {
+        std::cout << "[ESPortManager][TCP][" << localPort << "] recv " << buf->size()
         << " bytes from " << peerIp << std::endl;
+        return;
+    }
+
+    if (localPort == 51040) {
+        std::string& cache = m_tcpRecvBuffers51040[peerAddr];
+        cache += chunk;
+
+        while (true) {
+            ESRtspLiteMessage msg;
+            std::string rawMsg;
+            std::string error;
+            if (!ESRtspLiteCodec::TryDecode(cache, msg, &rawMsg, &error)) {
+                break;
+            }
+
+            std::string response = m_server->HandleTcpRequest(localPort, peerIp, rawMsg);
+            if (!response.empty()) {
+                channel->write(response);
+            }
+        }
         return;
     }
 
