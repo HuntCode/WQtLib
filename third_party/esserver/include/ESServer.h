@@ -25,6 +25,12 @@ public:
     bool IsRunning() const;
 
 private:
+    friend class ESPortManager;
+
+    void OnTcpConnected(uint16_t localPort, const std::string& peerIp);
+    void OnTcpDisconnected(uint16_t localPort, const std::string& peerIp);
+    std::string HandleTcpRequest(uint16_t localPort, const std::string& peerIp, const std::string& request);
+
     std::shared_ptr<ESSession> GetSession(uint32_t streamId);
     std::shared_ptr<ESSession> CreateSession(uint32_t streamId);
     void RemoveSession(uint32_t streamId);

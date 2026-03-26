@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
+#include "hv/TcpServer.h"
 
 namespace hhcast {
 
@@ -19,8 +21,10 @@ public:
     bool IsRunning() const;
 
 private:
-    std::atomic<bool> m_running{ false };
     ESServer* m_server = nullptr;
+    std::atomic<bool> m_running{ false };
+
+    std::unique_ptr<hv::TcpServer> m_tcpServer8700;
 };
 
 } // namespace hhcast
