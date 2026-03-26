@@ -3,6 +3,7 @@
 #include "IESServerCallback.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -31,6 +32,8 @@ private:
     void OnTcpConnected(uint16_t localPort, const std::string& peerIp);
     void OnTcpDisconnected(uint16_t localPort, const std::string& peerIp);
     std::string HandleTcpRequest(uint16_t localPort, const std::string& peerIp, const std::string& request);
+
+    void OnUdpData(uint16_t localPort, const std::string& peerIp, const uint8_t* data, size_t size);
 
     std::shared_ptr<ESSession> GetSession(uint32_t streamId);
     std::shared_ptr<ESSession> CreateSession(uint32_t streamId);

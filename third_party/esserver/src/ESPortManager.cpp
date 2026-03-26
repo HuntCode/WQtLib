@@ -2,9 +2,16 @@
 
 #include "ESServer.h"
 
+#include <algorithm>
 #include <iostream>
 #include <string>
-#include <algorithm>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#endif
 
 namespace hhcast {
 
@@ -25,6 +32,19 @@ static void TrimLeadingCrlf(std::string& text)
     while (!text.empty() && (text[0] == '\r' || text[0] == '\n')) {
         text.erase(text.begin());
     }
+}
+
+static uint16_t GetLocalPortByFd(int fd)
+{
+    sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    std::memset(&addr, 0, sizeof(addr));
+
+    if (getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
+        return 0;
+    }
+
+    return ntohs(addr.sin_port);
 }
 
 } // namespace
@@ -75,7 +95,54 @@ int ESPortManager::Start()
         return ret;
     }
 
+    ret = StartTcpServer(51030, m_tcpServer51030);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        return ret;
+    }
+
+    ret = StartUdpServer(m_mousePort, m_udpServer51050, m_mousePort);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        StopTcpServer(m_tcpServer51030);
+        return ret;
+    }
+
+    ret = StartUdpServer(0, m_udpServerDataPort, m_dataPort);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        StopTcpServer(m_tcpServer51030);
+        StopUdpServer(m_udpServer51050);
+        return ret;
+    }
+
+    ret = StartUdpServer(0, m_udpServerControlPort, m_controlPort);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        StopTcpServer(m_tcpServer57395);
+        StopTcpServer(m_tcpServer8600);
+        StopTcpServer(m_tcpServer51030);
+        StopUdpServer(m_udpServer51050);
+        StopUdpServer(m_udpServerDataPort);
+        return ret;
+    }
+
     m_running = true;
+
+    std::cout << "[ESPortManager] udp ports ready, mousePort=" << m_mousePort
+              << ", dataPort=" << m_dataPort
+              << ", controlPort=" << m_controlPort << std::endl;
+
     return 0;
 }
 
@@ -89,6 +156,15 @@ int ESPortManager::Stop()
     StopTcpServer(m_tcpServer8121);
     StopTcpServer(m_tcpServer57395);
     StopTcpServer(m_tcpServer8600);
+    StopTcpServer(m_tcpServer51030);
+
+    StopUdpServer(m_udpServer51050);
+    StopUdpServer(m_udpServerDataPort);
+    StopUdpServer(m_udpServerControlPort);
+
+    m_mousePort = 51050;
+    m_dataPort = 0;
+    m_controlPort = 0;
 
     m_tcpRecvBuffers8600.clear();
 
@@ -106,6 +182,21 @@ void ESPortManager::SetServer(ESServer* server)
 bool ESPortManager::IsRunning() const
 {
     return m_running.load();
+}
+
+uint16_t ESPortManager::GetMousePort() const
+{
+    return m_mousePort;
+}
+
+uint16_t ESPortManager::GetDataPort() const
+{
+    return m_dataPort;
+}
+
+uint16_t ESPortManager::GetControlPort() const
+{
+    return m_controlPort;
 }
 
 int ESPortManager::StartTcpServer(uint16_t localPort, std::unique_ptr<hv::TcpServer>& server)
@@ -157,6 +248,44 @@ void ESPortManager::StopTcpServer(std::unique_ptr<hv::TcpServer>& server)
     }
 }
 
+int ESPortManager::StartUdpServer(uint16_t bindPort,
+                                  std::unique_ptr<hv::UdpServer>& server,
+                                  uint16_t& actualPort)
+{
+    server = std::make_unique<hv::UdpServer>();
+
+    int sockfd = server->createsocket(bindPort);
+    if (sockfd < 0) {
+        std::cout << "[ESPortManager] create udp " << bindPort << " socket failed" << std::endl;
+        server.reset();
+        return -200 - static_cast<int>(bindPort);
+    }
+
+    actualPort = GetLocalPortByFd(sockfd);
+    if (actualPort == 0) {
+        std::cout << "[ESPortManager] get udp local port failed, bindPort=" << bindPort << std::endl;
+        server.reset();
+        return -300 - static_cast<int>(bindPort);
+    }
+
+    server->onMessage = [this, actualPort](const hv::SocketChannelPtr& channel, hv::Buffer* buf) {
+        HandleUdpMessage(actualPort, channel, buf);
+    };
+
+    server->start();
+
+    std::cout << "[ESPortManager] udp " << actualPort << " listening, fd=" << sockfd << std::endl;
+    return 0;
+}
+
+void ESPortManager::StopUdpServer(std::unique_ptr<hv::UdpServer>& server)
+{
+    if (server) {
+        server->stop();
+        server.reset();
+    }
+}
+
 void ESPortManager::HandleTcpMessage(uint16_t localPort,
                                      const hv::SocketChannelPtr& channel,
                                      hv::Buffer* buf)
@@ -169,7 +298,12 @@ void ESPortManager::HandleTcpMessage(uint16_t localPort,
     std::string peerIp = ExtractPeerIp(peerAddr);
     std::string chunk(reinterpret_cast<const char*>(buf->data()), buf->size());
 
-    // 8600 需要简单按连接缓存，因为命令可能拆包、补 CRLF、或者连续拼接
+    if (localPort == 51030) {
+        std::cout << "[ESPortManager][TCP][51030] recv " << buf->size()
+        << " bytes from " << peerIp << std::endl;
+        return;
+    }
+
     if (localPort == 8600) {
         std::string& cache = m_tcpRecvBuffers8600[peerAddr];
         cache += chunk;
@@ -203,12 +337,10 @@ void ESPortManager::HandleTcpMessage(uint16_t localPort,
                 continue;
             }
 
-            // 如果当前缓存只是已知命令的前缀，继续等待更多数据
             if (cmdAvailability.rfind(cache, 0) == 0 || cmdState.rfind(cache, 0) == 0) {
                 break;
             }
 
-            // 尝试在中间找到下一个合法命令起点，丢掉前面的噪声
             size_t posAvailability = cache.find(cmdAvailability);
             size_t posState = cache.find(cmdState);
             size_t pos = std::string::npos;
@@ -226,7 +358,6 @@ void ESPortManager::HandleTcpMessage(uint16_t localPort,
                 continue;
             }
 
-            // 没找到合法命令，直接清空当前垃圾数据
             cache.clear();
             break;
         }
@@ -234,11 +365,25 @@ void ESPortManager::HandleTcpMessage(uint16_t localPort,
         return;
     }
 
-    // 其他端口暂时沿用“一次 onMessage 就是一条完整请求”的简化模型
     std::string response = m_server->HandleTcpRequest(localPort, peerIp, chunk);
     if (!response.empty()) {
         channel->write(response);
     }
+}
+
+void ESPortManager::HandleUdpMessage(uint16_t localPort,
+                                     const hv::SocketChannelPtr& channel,
+                                     hv::Buffer* buf)
+{
+    if (m_server == nullptr || channel == nullptr || buf == nullptr || buf->size() == 0) {
+        return;
+    }
+
+    std::string peerIp = ExtractPeerIp(channel->peeraddr());
+    m_server->OnUdpData(localPort,
+                        peerIp,
+                        reinterpret_cast<const uint8_t*>(buf->data()),
+                        static_cast<size_t>(buf->size()));
 }
 
 } // namespace hhcast

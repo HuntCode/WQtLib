@@ -261,6 +261,13 @@ void ESServer::OnTcpDisconnected(uint16_t localPort, const std::string& peerIp)
     }
 }
 
+void ESServer::OnUdpData(uint16_t localPort, const std::string& peerIp, const uint8_t* data, size_t size)
+{
+    (void)data;
+    std::cout << "[ESServer][UDP][" << localPort << "] recv " << size
+              << " bytes from " << peerIp << std::endl;
+}
+
 std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& peerIp, const std::string& request)
 {
     std::cout << "[ESServer][TCP][" << localPort << "] request from " << peerIp << ":\n"
