@@ -1,10 +1,25 @@
 #include "ESPortManager.h"
+
 #include "ESServer.h"
 
 #include <iostream>
 #include <string>
 
 namespace hhcast {
+
+namespace {
+
+static std::string ExtractPeerIp(const std::string& peerAddr)
+{
+    size_t pos = peerAddr.find(':');
+    if (pos == std::string::npos) {
+        return peerAddr;
+    }
+
+    return peerAddr.substr(0, pos);
+}
+
+} // namespace
 
 ESPortManager::ESPortManager()
 {
@@ -26,49 +41,18 @@ int ESPortManager::Start()
         return -1;
     }
 
-    m_tcpServer8700 = std::make_unique<hv::TcpServer>();
-
-    int listenfd = m_tcpServer8700->createsocket(8700);
-    if (listenfd < 0) {
-        std::cout << "[ESPortManager] create 8700 socket failed" << std::endl;
-        m_tcpServer8700.reset();
-        return -2;
+    int ret = StartTcpServer(8700, m_tcpServer8700);
+    if (ret != 0) {
+        return ret;
     }
 
-    m_tcpServer8700->onConnection = [this](const hv::SocketChannelPtr& channel) {
-        std::string peerIp = channel->peeraddr();
-
-        if (channel->isConnected()) {
-            if (m_server) {
-                m_server->OnTcpConnected(8700, peerIp);
-            }
-        } else {
-            if (m_server) {
-                m_server->OnTcpDisconnected(8700, peerIp);
-            }
-        }
-    };
-
-    m_tcpServer8700->onMessage = [this](const hv::SocketChannelPtr& channel, hv::Buffer* buf) {
-        if (m_server == nullptr || buf == nullptr || buf->size() == 0) {
-            return;
-        }
-
-        std::string peerIp = channel->peeraddr();
-        std::string request(reinterpret_cast<const char*>(buf->data()), buf->size());
-
-        std::string response = m_server->HandleTcpRequest(8700, peerIp, request);
-        if (!response.empty()) {
-            channel->write(response);
-        }
-    };
-
-    m_tcpServer8700->setThreadNum(1);
-    m_tcpServer8700->start();
+    ret = StartTcpServer(8121, m_tcpServer8121);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        return ret;
+    }
 
     m_running = true;
-    std::cout << "[ESPortManager] tcp 8700 listening, fd=" << listenfd << std::endl;
-
     return 0;
 }
 
@@ -78,10 +62,8 @@ int ESPortManager::Stop()
         return 0;
     }
 
-    if (m_tcpServer8700) {
-        m_tcpServer8700->stop();
-        m_tcpServer8700.reset();
-    }
+    StopTcpServer(m_tcpServer8700);
+    StopTcpServer(m_tcpServer8121);
 
     m_running = false;
     std::cout << "[ESPortManager] stopped" << std::endl;
@@ -97,6 +79,60 @@ void ESPortManager::SetServer(ESServer* server)
 bool ESPortManager::IsRunning() const
 {
     return m_running.load();
+}
+
+int ESPortManager::StartTcpServer(uint16_t localPort, std::unique_ptr<hv::TcpServer>& server)
+{
+    server = std::make_unique<hv::TcpServer>();
+
+    int listenfd = server->createsocket(localPort);
+    if (listenfd < 0) {
+        std::cout << "[ESPortManager] create tcp " << localPort << " socket failed" << std::endl;
+        server.reset();
+        return -100 - static_cast<int>(localPort);
+    }
+
+    server->onConnection = [this, localPort](const hv::SocketChannelPtr& channel) {
+        std::string peerIp = ExtractPeerIp(channel->peeraddr());
+
+        if (channel->isConnected()) {
+            if (m_server) {
+                m_server->OnTcpConnected(localPort, peerIp);
+            }
+        } else {
+            if (m_server) {
+                m_server->OnTcpDisconnected(localPort, peerIp);
+            }
+        }
+    };
+
+    server->onMessage = [this, localPort](const hv::SocketChannelPtr& channel, hv::Buffer* buf) {
+        if (m_server == nullptr || buf == nullptr || buf->size() == 0) {
+            return;
+        }
+
+        std::string peerIp = ExtractPeerIp(channel->peeraddr());
+        std::string request(reinterpret_cast<const char*>(buf->data()), buf->size());
+
+        std::string response = m_server->HandleTcpRequest(localPort, peerIp, request);
+        if (!response.empty()) {
+            channel->write(response);
+        }
+    };
+
+    server->setThreadNum(1);
+    server->start();
+
+    std::cout << "[ESPortManager] tcp " << localPort << " listening, fd=" << listenfd << std::endl;
+    return 0;
+}
+
+void ESPortManager::StopTcpServer(std::unique_ptr<hv::TcpServer>& server)
+{
+    if (server) {
+        server->stop();
+        server.reset();
+    }
 }
 
 } // namespace hhcast

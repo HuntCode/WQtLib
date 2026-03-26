@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace hhcast {
 
@@ -14,11 +15,13 @@ static std::string Trim(const std::string& value)
     size_t begin = 0;
     size_t end = value.size();
 
-    while (begin < end && (value[begin] == ' ' || value[begin] == '\t' || value[begin] == '\r' || value[begin] == '\n')) {
+    while (begin < end && (value[begin] == ' ' || value[begin] == '\t' ||
+                           value[begin] == '\r' || value[begin] == '\n')) {
         ++begin;
     }
 
-    while (end > begin && (value[end - 1] == ' ' || value[end - 1] == '\t' || value[end - 1] == '\r' || value[end - 1] == '\n')) {
+    while (end > begin && (value[end - 1] == ' ' || value[end - 1] == '\t' ||
+                           value[end - 1] == '\r' || value[end - 1] == '\n')) {
         --end;
     }
 
@@ -55,6 +58,22 @@ static std::string BuildRtspResponse(int statusCode,
     oss << "\r\n";
     oss << body;
     return oss.str();
+}
+
+static std::vector<std::string> SplitNonEmptyLines(const std::string& text)
+{
+    std::vector<std::string> lines;
+    std::istringstream iss(text);
+    std::string line;
+
+    while (std::getline(iss, line)) {
+        line = Trim(line);
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+
+    return lines;
 }
 
 } // namespace
@@ -122,28 +141,63 @@ void ESServer::OnTcpDisconnected(uint16_t localPort, const std::string& peerIp)
 
 std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& peerIp, const std::string& request)
 {
-    std::cout << "[ESServer][TCP][" << localPort << "] request from " << peerIp << ":\n"
+    std::cout << "[ESServer][TCP][" << localPort << "] request from " << peerIp << "<===\n"
               << request << std::endl;
 
     if (localPort == 8700) {
         const std::string cseq = GetHeaderValue(request, "CSeq");
 
+        std::string response;
         if (request.find("OPTIONS") != std::string::npos &&
             request.find("RTSP/1.0") != std::string::npos) {
             const std::string body = R"({"byom_tx_avalible":"0"})";
-            const std::string response = BuildRtspResponse(200, "OK", cseq, body);
-
-            std::cout << "[ESServer][TCP][8700] response to " << peerIp << ":\n"
-                      << response << std::endl;
-
-            return response;
+            response = BuildRtspResponse(200, "OK", cseq, body);
+        } else {
+            response = BuildRtspResponse(400, "Bad Request", cseq, "unsupported request");
         }
 
-        const std::string body = "unsupported request";
-        const std::string response = BuildRtspResponse(400, "Bad Request", cseq, body);
+        std::cout << "[ESServer][TCP][8700] response to " << peerIp << "===>\n"
+                  << response << std::endl;
 
-        std::cout << "[ESServer][TCP][8700] unsupported request from " << peerIp << std::endl;
-        std::cout << "[ESServer][TCP][8700] response to " << peerIp << ":\n"
+        return response;
+    }
+
+    if (localPort == 8121) {
+        std::vector<std::string> lines = SplitNonEmptyLines(request);
+        if (lines.size() < 3) {
+            std::cout << "[ESServer][TCP][8121] request lines not enough, wait more data" << std::endl;
+            return "";
+        }
+
+        const std::string& cmd = lines[0];
+        const std::string& senderName = lines[1];
+        const std::string& senderVersion = lines[2];
+
+        std::cout << "[ESServer][TCP][8121] cmd=" << cmd
+                  << ", senderName=" << senderName
+                  << ", senderVersion=" << senderVersion << std::endl;
+
+        std::string response;
+        if (cmd == "getServerInfo") {
+            response =
+                "{\"feature\":\"0x3001bf\","
+                "\"name\":\"Newline-7465\","
+                "\"version\":20260113,"
+                "\"pin\":\"27115282\","
+                "\"airPlay\":\"CD:49:0D:D4:41:A1\","
+                "\"airPlayFeature\":\"0x527FFFF6,0x1E\","
+                "\"webPort\":8000,"
+                "\"rotation\":0,"
+                "\"id\":\"EC74CD34EFEA\"}";
+        }
+        else if (cmd == "dongleConnected") {
+            response = "Newline-7465\n3.0.1.320\n";
+        }
+        else {
+            response = "unsupported\n";
+        }
+
+        std::cout << "[ESServer][TCP][8121] response to " << peerIp << "===>\n"
                   << response << std::endl;
 
         return response;
