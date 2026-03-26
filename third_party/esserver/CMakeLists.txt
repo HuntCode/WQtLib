@@ -3,9 +3,10 @@ cmake_minimum_required(VERSION 3.16)
 project(esserver LANGUAGES CXX)
 
 add_library(esserver STATIC
+    src/ESPortManager.cpp
     src/ESServer.cpp
-    include/ESServer.h
-    include/IESServerCallback.h
+    src/ESSession.cpp
+    src/ESUtils.cpp
 )
 
 target_include_directories(esserver
