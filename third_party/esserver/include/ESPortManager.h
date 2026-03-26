@@ -31,6 +31,7 @@ private:
 
     std::unique_ptr<hv::TcpServer> m_tcpServer8700;
     std::unique_ptr<hv::TcpServer> m_tcpServer8121;
+    std::unique_ptr<hv::TcpServer> m_tcpServer57395;
 };
 
 } // namespace hhcast

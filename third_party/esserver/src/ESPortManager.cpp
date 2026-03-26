@@ -52,6 +52,13 @@ int ESPortManager::Start()
         return ret;
     }
 
+    ret = StartTcpServer(57395, m_tcpServer57395);
+    if (ret != 0) {
+        StopTcpServer(m_tcpServer8700);
+        StopTcpServer(m_tcpServer8121);
+        return ret;
+    }
+
     m_running = true;
     return 0;
 }
@@ -64,6 +71,7 @@ int ESPortManager::Stop()
 
     StopTcpServer(m_tcpServer8700);
     StopTcpServer(m_tcpServer8121);
+    StopTcpServer(m_tcpServer57395);
 
     m_running = false;
     std::cout << "[ESPortManager] stopped" << std::endl;
