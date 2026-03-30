@@ -33,6 +33,7 @@ private:
     void OnTcpDisconnected(uint16_t localPort, const std::string& peerIp);
     std::string HandleTcpRequest(uint16_t localPort, const std::string& peerIp, const std::string& request);
 
+    void OnTcpData(uint16_t localPort, const std::string& peerIp, const uint8_t* data, size_t size);
     void OnUdpData(uint16_t localPort, const std::string& peerIp, const uint8_t* data, size_t size);
 
     std::shared_ptr<ESSession> GetSession(uint32_t streamId);

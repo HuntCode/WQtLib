@@ -403,11 +403,90 @@ void ESServer::OnTcpDisconnected(uint16_t localPort, const std::string& peerIp)
     }
 }
 
-void ESServer::OnUdpData(uint16_t localPort, const std::string& peerIp, const uint8_t* data, size_t size)
+void ESServer::OnTcpData(uint16_t localPort,
+                         const std::string& peerIp,
+                         const uint8_t* data,
+                         size_t size)
 {
-    (void)data;
-    std::cout << "[ESServer][UDP][" << localPort << "] recv " << size
-              << " bytes from " << peerIp << std::endl;
+    if (data == nullptr || size == 0) {
+        return;
+    }
+
+    std::cout << "[ESServer][TCP][" << localPort << "] recv "
+              << size << " bytes from " << peerIp << std::endl;
+
+    if (localPort != 51030) {
+        return;
+    }
+
+    const uint32_t streamId = IPToStreamID(peerIp);
+    if (streamId == 0) {
+        std::cout << "[ESServer][TCP][51030] invalid peer ip: "
+                  << peerIp << std::endl;
+        return;
+    }
+
+    auto session = GetSession(streamId);
+    if (!session) {
+        std::cout << "[ESServer][TCP][51030] session not found, drop video, streamId="
+                  << streamId << ", peerIp=" << peerIp << std::endl;
+        return;
+    }
+
+    session->InputVideoTcpData(data, size);
+}
+
+void ESServer::OnUdpData(uint16_t localPort,
+                         const std::string& peerIp,
+                         const uint8_t* data,
+                         size_t size)
+{
+    if (data == nullptr || size == 0) {
+        return;
+    }
+
+    std::cout << "[ESServer][UDP][" << localPort << "] recv "
+              << size << " bytes from " << peerIp << std::endl;
+
+    if (m_portManager == nullptr) {
+        return;
+    }
+
+    const uint16_t dataPort = m_portManager->GetDataPort();
+    const uint16_t controlPort = m_portManager->GetControlPort();
+    const uint16_t mousePort = m_portManager->GetMousePort();
+
+    if (localPort == dataPort) {
+        const uint32_t streamId = IPToStreamID(peerIp);
+        if (streamId == 0) {
+            std::cout << "[ESServer][UDP][" << localPort
+                      << "] invalid peer ip: " << peerIp << std::endl;
+            return;
+        }
+
+        auto session = GetSession(streamId);
+        if (!session) {
+            std::cout << "[ESServer][UDP][" << localPort
+                      << "] session not found, drop audio, streamId="
+                      << streamId << ", peerIp=" << peerIp << std::endl;
+            return;
+        }
+
+        session->InputAudioUdpDatagram(data, size);
+        return;
+    }
+
+    if (localPort == controlPort) {
+        std::cout << "[ESServer][UDP][" << localPort
+                  << "] control data ignored for now." << std::endl;
+        return;
+    }
+
+    if (localPort == mousePort) {
+        std::cout << "[ESServer][UDP][" << localPort
+                  << "] mouse data ignored for now." << std::endl;
+        return;
+    }
 }
 
 std::string ESServer::HandleTcpRequest(uint16_t localPort, const std::string& peerIp, const std::string& request)
@@ -697,6 +776,31 @@ std::shared_ptr<ESSession> ESServer::CreateSession(uint32_t streamId)
     }
 
     session = std::make_shared<ESSession>(streamId);
+
+    session->SetVideoCallback(
+        [this](uint32_t cbStreamId,
+               const uint8_t* data,
+               size_t size,
+               const ESVideoUnit& unit) {
+            (void)unit;
+
+            if (m_callback && data != nullptr && size > 0) {
+                m_callback->OnVideoData(cbStreamId, data, size);
+            }
+        });
+
+    session->SetAudioCallback(
+        [this](uint32_t cbStreamId,
+               const uint8_t* data,
+               size_t size,
+               const ESAudioPayloadInfo& info) {
+            (void)info;
+
+            if (m_callback && data != nullptr && size > 0) {
+                m_callback->OnAudioData(cbStreamId, data, size);
+            }
+        });
+
     m_sessions[streamId] = session;
     return session;
 }

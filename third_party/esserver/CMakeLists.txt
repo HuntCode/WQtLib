@@ -7,6 +7,9 @@ add_library(esserver STATIC
     src/ESSession.cpp
     src/ESUtils.cpp
     src/ESRtspLite.cpp
+    src/ESVideoDepacketizer.cpp
+    src/ESAudioDatagramParser.cpp
+    src/ESAudioRtpParser.cpp
 )
 
 target_include_directories(esserver

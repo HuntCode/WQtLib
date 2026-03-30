@@ -369,7 +369,19 @@ void ESPortManager::HandleTcpMessage(uint16_t localPort,
     std::string peerIp = ExtractPeerIp(peerAddr);
     std::string chunk(reinterpret_cast<const char*>(buf->data()), buf->size());
 
-    if (localPort == 51030 || localPort == 52020 || localPort == 52025 || localPort == 52030) {
+    if (localPort == 51030) {
+        std::cout << "[ESPortManager][TCP][51030] recv " << buf->size()
+        << " bytes from " << peerIp << std::endl;
+
+        m_server->OnTcpData(
+            localPort,
+            peerIp,
+            reinterpret_cast<const uint8_t*>(buf->data()),
+            static_cast<size_t>(buf->size()));
+        return;
+    }
+
+    if (localPort == 52020 || localPort == 52025 || localPort == 52030) {
         std::cout << "[ESPortManager][TCP][" << localPort << "] recv " << buf->size()
         << " bytes from " << peerIp << std::endl;
         return;
